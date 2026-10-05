@@ -24,3 +24,4 @@ tr.row{cursor:pointer}tr.row:hover{background:var(--bg)}
 .comment{border-left:3px solid var(--bd);padding:4px 12px;margin:10px 0}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 @media(max-width:600px){.grid2{grid-template-columns:1fr}}
+.kpi{text-align:center;margin:0}.kpi .num{font-size:26px;font-weight:700}

@@ -75,7 +75,7 @@ async function listView() {
   const rows = await api('/tickets?' + params);
   $('#tbl').innerHTML = rows.length ? `<table><tr><th>#</th><th>Asunto</th><th>Solicitante</th><th>Depto.</th><th>Prioridad</th><th>Estado</th><th>Asignado</th></tr>
     ${rows.map((t) => `<tr class="row" data-id="${t.id}"><td>${t.id}</td><td>${esc(t.title)}</td><td>${esc(t.requester_name)}</td>
-    <td>${esc(t.department)}</td><td>${badge(t.priority)}</td><td>${badge(t.status)}</td><td>${esc(t.assignee_name || '—')}</td></tr>`).join('')}</table>`
+    <td>${esc(t.department)}</td><td>${badge(t.priority)}</td><td>${badge(t.status)}${!t.resolved_at && (t.sla_response_breached || t.sla_resolve_breached) ? ' <span class="badge b-urgente">SLA vencido</span>' : ''}</td><td>${esc(t.assignee_name || '—')}</td></tr>`).join('')}</table>`
     : '<p class="muted">No hay tickets.</p>';
   document.querySelectorAll('tr.row').forEach((r) => (r.onclick = () => (location.hash = '#/ticket/' + r.dataset.id)));
   if (isStaff()) {
@@ -112,6 +112,8 @@ async function detailView(id) {
     <h2>#${t.id} · ${esc(t.title)}</h2>
     <p class="muted">${esc(t.requester_name)} (${esc(t.requester_email)}) · ${esc(t.department)} · ${esc(t.category)} · ${esc(t.created_at)} UTC</p>
     <p>${badge(t.priority)} ${badge(t.status)} · Asignado: ${esc(t.assignee_name || '—')}</p>
+    <p class="muted">Primera respuesta: ${t.first_response_at ? esc(t.first_response_at) + ' UTC' : 'pendiente'} (límite ${new Date(t.sla_response_due).toLocaleString()}${t.sla_response_breached ? ' · <b class="err">vencido</b>' : ''})<br>
+    Resolución: ${t.resolved_at ? esc(t.resolved_at) + ' UTC' : 'pendiente'} (límite ${new Date(t.sla_resolve_due).toLocaleString()}${t.sla_resolve_breached ? ' · <b class="err">vencido</b>' : ''})</p>
     <p style="white-space:pre-wrap">${esc(t.description)}</p></div>
     ${isStaff() ? `<div class="card"><h3>Gestionar</h3><form id="mgr" class="grid2">
       <div><label>Estado</label><select name="status">${options(meta.statuses, t.status)}</select></div>
@@ -163,6 +165,33 @@ async function adminView() {
   };
 }
 
+// ---------- Reportes ----------
+async function reportsView() {
+  if (!isStaff()) return (location.hash = '#/tickets');
+  const params = new URLSearchParams(location.hash.split('?')[1] || '');
+  const r = await api('/reports?' + params);
+  const h = (x) => (x == null ? '—' : x + ' h');
+  const p = (x) => (x == null ? '—' : x + '%');
+  const tbl = (title, rows) => `<div class="card"><h3>${title}</h3><table>
+    <tr><th></th><th>Total</th><th>Abiertos</th><th>Resueltos</th><th>Resp. prom.</th><th>Resol. prom.</th><th>SLA resp.</th><th>SLA resol.</th></tr>
+    ${rows.map((x) => `<tr><td>${label(x.name)}</td><td>${x.total}</td><td>${x.open}</td><td>${x.resolved}</td><td>${h(x.avg_response_h)}</td><td>${h(x.avg_resolve_h)}</td><td>${p(x.response_sla_pct)}</td><td>${p(x.resolve_sla_pct)}</td></tr>`).join('')}</table></div>`;
+  const s = r.summary;
+  app.innerHTML = `<div class="card"><h2>Reportes</h2>
+    <form id="rf" class="filters"><div><label>Desde</label><input type="date" name="from" value="${esc(r.from || '')}"></div>
+    <div><label>Hasta</label><input type="date" name="to" value="${esc(r.to || '')}"></div><button>Aplicar</button>
+    <a href="/api/reports/export.csv?${esc(params)}" style="align-self:end;padding:8px">⬇ Exportar CSV</a></form></div>
+    <div class="grid2" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr))">
+      ${[['Tickets', s.total], ['Abiertos', s.open], ['Resp. promedio', h(s.avg_response_h)], ['Resolución prom.', h(s.avg_resolve_h)],
+        ['Cumple SLA resp.', p(s.response_sla_pct)], ['Cumple SLA resol.', p(s.resolve_sla_pct)], ['Abiertos vencidos', r.overdue_open]]
+        .map(([k, v]) => `<div class="card kpi"><div class="muted">${k}</div><div class="num">${v}</div></div>`).join('')}</div>
+    ${tbl('Por prioridad', r.by_priority)}${tbl('Por departamento', r.by_department)}${tbl('Por categoría', r.by_category)}${tbl('Por responsable', r.by_assignee)}${tbl('Por estado', r.by_status)}
+    <p class="muted">Objetivos (horas corridas) — ${Object.entries(r.sla_targets).map(([k, v]) => `${k}: respuesta ${v.response} h / resolución ${v.resolve} h`).join(' · ')}</p>`;
+  $('#rf').onsubmit = (e) => {
+    e.preventDefault();
+    location.hash = '#/reports?' + new URLSearchParams([...new FormData(e.target)].filter(([, v]) => v));
+  };
+}
+
 // ---------- Router ----------
 async function route() {
   if (!meta) meta = await api('/meta');
@@ -172,13 +201,14 @@ async function route() {
     if (h.startsWith('/ticket/')) await detailView(h.split('/')[2]);
     else if (h === '/new') newView();
     else if (h === '/admin') await adminView();
+    else if (h.startsWith('/reports')) await reportsView();
     else await listView();
   } catch (e) { app.innerHTML = `<div class="card err">${esc(e.message)}</div>`; }
 }
 
 function start() {
   $('#top').hidden = !me;
-  if (me) { $('#who').textContent = `${me.name} · ${me.department}`; $('#adminLink').hidden = me.role !== 'admin'; }
+  if (me) { $('#who').textContent = `${me.name} · ${me.department}`; $('#adminLink').hidden = me.role !== 'admin'; $('#repLink').hidden = !isStaff(); }
   route();
 }
 $('#logout').onclick = async () => { await api('/logout', { method: 'POST' }); me = null; location.hash = '#/login'; start(); };

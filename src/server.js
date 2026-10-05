@@ -8,6 +8,7 @@ const multer = require('multer');
 const db = require('./db');
 const imap = require('./imapAuth');
 const mailer = require('./mailer');
+const { withSla, targets: SLA_TARGETS } = require('./sla');
 
 const ALLOWED_DOMAIN = (process.env.ALLOWED_DOMAIN || 'empresa.com').toLowerCase().replace(/^@/, '');
 const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || '').toLowerCase();
@@ -170,7 +171,7 @@ app.get('/api/tickets', auth, wrap((req, res) => {
   if (department_id && isStaff(req.user)) { where.push('t.department_id = ?'); args.push(Number(department_id)); }
   if (q) { where.push('(t.title LIKE ? OR t.description LIKE ?)'); args.push(`%${str(q, 100)}%`, `%${str(q, 100)}%`); }
   const sql = `${TICKET_SELECT} ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY t.updated_at DESC, t.id DESC LIMIT 500`;
-  res.json(db.prepare(sql).all(...args));
+  res.json(db.prepare(sql).all(...args).map((t) => withSla(t)));
 }));
 
 app.post('/api/tickets', auth, wrap((req, res) => {
@@ -191,8 +192,8 @@ app.post('/api/tickets', auth, wrap((req, res) => {
 }));
 
 app.get('/api/tickets/:id', auth, wrap((req, res) => {
-  const t = db.prepare(`${TICKET_SELECT} WHERE t.id = ?`).get(Number(req.params.id));
-  if (!t || !canSee(req.user, t)) return res.status(404).json({ error: 'Ticket no encontrado' });
+  const t = withSla(db.prepare(`${TICKET_SELECT} WHERE t.id = ?`).get(Number(req.params.id)) || {});
+  if (!t.id || !canSee(req.user, t)) return res.status(404).json({ error: 'Ticket no encontrado' });
   t.attachments = db.prepare(`SELECT a.id, a.original_name, a.size, a.created_at, a.user_id, u.name AS author
     FROM attachments a JOIN users u ON u.id = a.user_id WHERE a.ticket_id = ? ORDER BY a.id`).all(t.id);
   t.comments = db.prepare(`SELECT c.id, c.body, c.created_at, u.name AS author, u.role
@@ -214,9 +215,15 @@ app.patch('/api/tickets/:id', auth, staff, wrap((req, res) => {
       assignee = a.id;
     }
   }
-  db.prepare("UPDATE tickets SET status=?, priority=?, assignee_id=?, updated_at=datetime('now') WHERE id=?")
-    .run(status, priority, assignee, t.id);
-  const updated = db.prepare(`${TICKET_SELECT} WHERE t.id = ?`).get(t.id);
+  const changed = status !== t.status || assignee !== t.assignee_id;
+  const firstResp = !t.first_response_at && changed && req.user.id !== t.requester_id;
+  const done = (x) => x === 'resuelto' || x === 'cerrado';
+  db.prepare(`UPDATE tickets SET status=?, priority=?, assignee_id=?, updated_at=datetime('now'),
+      first_response_at = CASE WHEN ? THEN datetime('now') ELSE first_response_at END,
+      resolved_at = CASE WHEN ? THEN COALESCE(resolved_at, datetime('now')) ELSE NULL END
+      WHERE id=?`)
+    .run(status, priority, assignee, firstResp ? 1 : 0, done(status) ? 1 : 0, t.id);
+  const updated = withSla(db.prepare(`${TICKET_SELECT} WHERE t.id = ?`).get(t.id));
   if (status !== t.status)
     mailer.notify(updated.requester_email, `Estado: ${status.replace('_', ' ')}`, updated,
       `El estado de tu ticket cambió de "${t.status.replace('_', ' ')}" a "${status.replace('_', ' ')}".`);
@@ -232,7 +239,9 @@ app.post('/api/tickets/:id/comments', auth, wrap((req, res) => {
   const body = str(req.body.body, 5000);
   if (!body) return res.status(400).json({ error: 'El comentario está vacío' });
   db.prepare('INSERT INTO comments (ticket_id, user_id, body) VALUES (?,?,?)').run(t.id, req.user.id, body);
-  db.prepare("UPDATE tickets SET updated_at = datetime('now') WHERE id = ?").run(t.id);
+  db.prepare(`UPDATE tickets SET updated_at = datetime('now'),
+      first_response_at = CASE WHEN first_response_at IS NULL AND ? THEN datetime('now') ELSE first_response_at END
+      WHERE id = ?`).run(isStaff(req.user) && req.user.id !== t.requester_id ? 1 : 0, t.id);
   const full = db.prepare(`${TICKET_SELECT} WHERE t.id = ?`).get(t.id);
   let to;
   if (req.user.id === t.requester_id) {
@@ -294,6 +303,75 @@ app.get('/api/stats', auth, staff, wrap((req, res) => {
     by_department: db.prepare(`SELECT d.name AS department, COUNT(*) AS n FROM tickets t
       JOIN departments d ON d.id = t.department_id GROUP BY d.id ORDER BY n DESC`).all(),
   });
+}));
+
+// ---------- Reportes ----------
+const ymd = (v) => (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) && !isNaN(Date.parse(v)) ? v : null);
+function rangeOf(q) {
+  const from = ymd(q.from), to = ymd(q.to);
+  const where = []; const args = [];
+  if (from) { where.push('t.created_at >= ?'); args.push(from + ' 00:00:00'); }
+  if (to) { where.push("t.created_at < date(?, '+1 day')"); args.push(to); }
+  return { from, to, sql: where.length ? 'WHERE ' + where.join(' AND ') : '', args };
+}
+const avg = (a) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : null);
+const pct = (n, d) => (d ? Math.round((n / d) * 1000) / 10 : null);
+const round1 = (x) => (x == null ? null : Math.round(x * 10) / 10);
+
+function group(rows, keyFn) {
+  const m = new Map();
+  for (const r of rows) {
+    const k = keyFn(r);
+    if (!m.has(k)) m.set(k, []);
+    m.get(k).push(r);
+  }
+  return [...m.entries()].map(([name, list]) => summarize(name, list)).sort((a, b) => b.total - a.total);
+}
+function summarize(name, list) {
+  const responded = list.filter((t) => t.response_hours != null);
+  const resolved = list.filter((t) => t.resolve_hours != null);
+  return {
+    name, total: list.length,
+    open: list.filter((t) => !t.resolved_at).length,
+    resolved: resolved.length,
+    avg_response_h: round1(avg(responded.map((t) => t.response_hours))),
+    avg_resolve_h: round1(avg(resolved.map((t) => t.resolve_hours))),
+    response_sla_pct: pct(list.filter((t) => !t.sla_response_breached).length, list.length),
+    resolve_sla_pct: pct(list.filter((t) => !t.sla_resolve_breached).length, list.length),
+  };
+}
+
+app.get('/api/reports', auth, staff, wrap((req, res) => {
+  const r = rangeOf(req.query);
+  const rows = db.prepare(`${TICKET_SELECT} ${r.sql}`).all(...r.args).map((t) => withSla(t));
+  res.json({
+    from: r.from, to: r.to, sla_targets: SLA_TARGETS,
+    summary: summarize('Total', rows),
+    overdue_open: rows.filter((t) => !t.resolved_at && (t.sla_response_breached || t.sla_resolve_breached)).length,
+    by_status: group(rows, (t) => t.status),
+    by_priority: group(rows, (t) => t.priority),
+    by_department: group(rows, (t) => t.department),
+    by_category: group(rows, (t) => t.category),
+    by_assignee: group(rows, (t) => t.assignee_name || 'Sin asignar'),
+  });
+}));
+
+const csvCell = (v) => {
+  let s = v == null ? '' : String(v);
+  if (/^[=+\-@\t\r]/.test(s)) s = "'" + s; // evita fórmulas al abrir en Excel
+  return /[",\n\r;]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+};
+app.get('/api/reports/export.csv', auth, staff, wrap((req, res) => {
+  const r = rangeOf(req.query);
+  const rows = db.prepare(`${TICKET_SELECT} ${r.sql} ORDER BY t.id`).all(...r.args).map((t) => withSla(t));
+  const head = ['id', 'titulo', 'categoria', 'prioridad', 'estado', 'solicitante', 'departamento', 'asignado', 'creado_utc',
+    'primera_respuesta_utc', 'resuelto_utc', 'horas_hasta_respuesta', 'horas_hasta_resolucion', 'sla_respuesta_vencido', 'sla_resolucion_vencido'];
+  const lines = [head.join(',')].concat(rows.map((t) => [t.id, t.title, t.category, t.priority, t.status, t.requester_name,
+    t.department, t.assignee_name, t.created_at, t.first_response_at, t.resolved_at, round1(t.response_hours),
+    round1(t.resolve_hours), t.sla_response_breached ? 'si' : 'no', t.sla_resolve_breached ? 'si' : 'no'].map(csvCell).join(',')));
+  res.set('Content-Type', 'text/csv; charset=utf-8');
+  res.set('Content-Disposition', 'attachment; filename="tickets.csv"');
+  res.send('﻿' + lines.join('\r\n'));
 }));
 
 // ---------- Admin ----------

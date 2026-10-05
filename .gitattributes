@@ -1,0 +1,6 @@
+# Los scripts de Linux deben quedar con saltos de línea LF aunque se clonen en Windows
+*.sh text eol=lf
+Dockerfile text eol=lf
+Caddyfile text eol=lf
+# Los .cmd de Windows necesitan CRLF
+*.cmd text eol=crlf

@@ -4,7 +4,8 @@
   "description": "Sistema de tickets de TI",
   "main": "index.js",
   "scripts": {
-    "start": "node src/server.js"
+    "start": "node src/server.js",
+    "test": "node --test test/*.test.js"
   },
   "repository": {
     "type": "git",
@@ -22,8 +23,12 @@
     "better-sqlite3": "^13.0.3",
     "express": "^5.2.1",
     "express-session": "^1.19.0",
+    "helmet": "^8.3.0",
     "imapflow": "^2.2.5",
     "multer": "^2.4.0",
     "nodemailer": "^10.0.15"
+  },
+  "engines": {
+    "node": ">=22"
   }
 }

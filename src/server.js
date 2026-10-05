@@ -5,6 +5,8 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const multer = require('multer');
+const helmet = require('helmet');
+const SqliteStore = require('./sessionStore');
 const db = require('./db');
 const imap = require('./imapAuth');
 const mailer = require('./mailer');
@@ -38,8 +40,28 @@ const upload = multer({
 const app = express();
 if (process.env.TRUST_PROXY) app.set('trust proxy', process.env.TRUST_PROXY === 'true' ? 1 : process.env.TRUST_PROXY);
 app.get('/healthz', (req, res) => res.json({ ok: true }));
+if (process.env.NODE_ENV === 'production' && !process.env.SESSION_SECRET) {
+  console.error('Falta SESSION_SECRET (obligatorio en producción)');
+  process.exit(1);
+}
+// CSP por defecto de helmet; sin HSTS forzado porque depende del proxy HTTPS
+app.use(helmet({ strictTransportSecurity: process.env.COOKIE_SECURE === 'true' }));
 app.use(express.json({ limit: '100kb' }));
+
+// Anti-CSRF: en peticiones que modifican datos, si el navegador envía Origin debe ser el mismo host.
+app.use('/api', (req, res, next) => {
+  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
+  const origin = req.get('origin');
+  if (origin) {
+    let host = null;
+    try { host = new URL(origin).host; } catch { /* origen inválido */ }
+    if (host !== req.get('host')) return res.status(403).json({ error: 'Origen no permitido' });
+  }
+  next();
+});
+
 app.use(session({
+  store: new SqliteStore(db),
   secret: process.env.SESSION_SECRET || 'cambia-este-secreto-en-produccion',
   resave: false,
   saveUninitialized: false,
@@ -411,4 +433,7 @@ app.use((err, req, res, next) => {
   console.error(err); res.status(500).json({ error: 'Error interno' });
 });
 
-app.listen(PORT, () => console.log(`E-Ticket TI en http://localhost:${PORT} (dominio permitido: @${ALLOWED_DOMAIN})`));
+if (require.main === module)
+  app.listen(PORT, () => console.log(`E-Ticket TI en http://localhost:${PORT} (dominio permitido: @${ALLOWED_DOMAIN})`));
+
+module.exports = app;

@@ -102,6 +102,14 @@ db.exec(`INSERT INTO ticket_events (ticket_id, at, status, assignee_id)
   SELECT id, created_at, status, assignee_id FROM tickets
   WHERE id NOT IN (SELECT ticket_id FROM ticket_events)`);
 
+// Correos ya procesados (evita duplicados al recibir tickets por correo)
+db.exec(`CREATE TABLE IF NOT EXISTS ingested_mail (
+  message_id TEXT PRIMARY KEY,
+  at TEXT NOT NULL DEFAULT (datetime('now')),
+  result TEXT NOT NULL,
+  ticket_id INTEGER
+)`);
+
 const DEFAULT_DEPARTMENTS = [
   'Administración', 'Recursos Humanos', 'Finanzas', 'Ventas', 'Marketing',
   'Operaciones', 'Logística', 'Legal', 'Tecnología',

@@ -8,7 +8,8 @@
     "test": "node --test \"test/*.test.js\"",
     "setup": "node scripts/setup.js",
     "backup": "node scripts/backup.js",
-    "demo": "node scripts/demo.js"
+    "demo": "node scripts/demo.js",
+    "demo:mail": "node scripts/demo-mail.js"
   },
   "repository": {
     "type": "git",

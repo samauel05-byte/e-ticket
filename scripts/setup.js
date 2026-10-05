@@ -71,6 +71,16 @@ async function main() {
     v.SMTP_FROM = await ask('smtp-from', 'Remitente de los avisos', `E-Ticket TI <${v.SMTP_USER || 'ti@' + v.ALLOWED_DOMAIN}>`);
   }
 
+  console.log('\nTickets por correo: bandeja de soporte (IMAP). Los correos que lleguen ahí se convierten en tickets.');
+  console.log('Déjalo vacío para desactivarlo. La contraseña se guarda solo en el archivo .env de este servidor.');
+  v.INBOX_HOST = await ask('inbox-host', 'Servidor IMAP de la bandeja de soporte (host)', '');
+  if (v.INBOX_HOST) {
+    v.INBOX_PORT = await ask('inbox-port', 'Puerto IMAP', '993');
+    v.INBOX_SECURE = v.INBOX_PORT === '993' ? 'true' : 'false';
+    v.INBOX_USER = await ask('inbox-user', 'Correo de la bandeja de soporte (usuario)', `soporte@${v.ALLOWED_DOMAIN}`);
+    v.INBOX_PASS = await ask('inbox-pass', 'Contraseña de esa bandeja', '');
+  }
+
   const lines = [];
   // Valores con caracteres especiales se escriben entre comillas SIMPLES (literales para Node y para Docker Compose).
   // Si el valor trae comilla simple Y otros caracteres especiales no hay forma segura de escribirlo.

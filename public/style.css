@@ -222,3 +222,5 @@ table.cards td select{width:auto;max-width:100%}
 .step.final{color:var(--ok)}.step.final::after{background:var(--ok);border-color:var(--ok)}.step.final.done::before{background:var(--ok)}
 .seg a{white-space:nowrap}
 @media(max-width:700px){.seg a{padding:7px 8px;font-size:12px}}
+
+.src{color:var(--info);font-weight:700}.b-info{background:var(--info-bg);color:var(--info)}

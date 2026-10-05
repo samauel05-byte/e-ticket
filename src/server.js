@@ -488,6 +488,7 @@ app.use((err, req, res, next) => {
 if (require.main === module)
   app.listen(PORT, () => {
     console.log(`E-Ticket TI en http://localhost:${PORT} (dominio permitido: @${ALLOWED_DOMAIN})`);
+    require('./mailIngest').start();
     const hm = (a) => a.map((n) => String(n).padStart(2, '0')).join(':');
     console.log(`SLA: ${hm(sla.config.START)}–${hm(sla.config.END)} zona ${sla.config.TZ}`);
     if (!process.env.SLA_TZ && sla.config.TZ === 'UTC')

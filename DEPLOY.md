@@ -58,6 +58,22 @@ Prográmalo a diario con cron y copia `./data/backups` y `./data/uploads` a otro
 - Estado: `docker compose ps` · salud de la app: `GET /healthz`
 - Reiniciar no cierra las sesiones (se guardan en la base). Es una sola instancia.
 
+## 6b. Tickets por correo (bandeja de soporte)
+Los usuarios pueden pedir ayuda **enviando un correo** a una dirección de soporte (por ejemplo `soporte@empresa.com`): cada correo nuevo se convierte en un ticket a nombre de quien lo envió, con el asunto como título, el texto como descripción y los adjuntos permitidos. Quien envía recibe la confirmación por correo y puede **responder a ese aviso** para agregar información al ticket; TI también puede responder desde su correo.
+
+**Configuración** (en `.env`, o con `node scripts/setup.js`; ver `.env.example`): `INBOX_HOST`, `INBOX_PORT`, `INBOX_USER` e `INBOX_PASS` de la cuenta de soporte, más `SMTP_*` con esa misma cuenta para que los avisos salgan desde esa dirección.
+> **La contraseña de la cuenta va solo en el archivo `.env` del servidor.** No la pegues en chats, correos ni en el repositorio (el `.env` ya está excluido de git). Si alguna vez se expone, cámbiala.
+
+**Cómo se comporta**
+- Revisa la bandeja cada `INBOX_POLL_SECONDS` (60 s) y solo toma correos **no leídos de los últimos 2 días** (`INBOX_MAX_AGE_DAYS`), para no crear tickets con correo antiguo; luego los marca como leídos. Conviene usar una cuenta **exclusiva** de soporte.
+- Solo atiende remitentes del dominio de la empresa (`ALLOWED_DOMAIN`). Si el remitente aún no tiene cuenta y el login es por IMAP, se crea sola (departamento "Sin departamento", que el administrador puede cambiar).
+- Ignora respuestas automáticas, rebotes, correos masivos y los que falla SPF/DKIM/DMARC. Con `INBOX_REQUIRE_AUTH=true` exige además que el servidor de correo los marque como verificados (**recomendado** si la bandeja recibe correo de internet, porque el remitente de un correo se puede falsificar).
+- Límite de `INBOX_MAX_PER_SENDER_HOUR` (20) tickets por remitente y hora.
+- La categoría se adivina por palabras clave del asunto y el texto (por ejemplo "VPN" → Red / Internet); TI puede cambiarla en el ticket.
+- No se lee el contenido HTML con scripts: solo el texto del correo. Los adjuntos siguen las mismas reglas que en la web (tipos permitidos, tamaño máximo).
+
+**Probarlo sin cuenta real:** `npm run demo` incluye una bandeja simulada; en otra ventana ejecuta `npm run demo:mail -- --from ana@empresa.com --subject "No tengo internet" --body "Desde las 9 no conecta"`.
+
 ## 7. Publicar en internet (usuarios fuera de la oficina)
 Con el login por IMAP la clave real del correo viaja a esta página, así que **solo se publica con HTTPS válido** y con las defensas de abajo.
 

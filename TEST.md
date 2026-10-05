@@ -14,6 +14,8 @@ npm run demo
 ```
 Abre http://localhost:3000. Para detenerla, `Ctrl+C`. Para empezar de cero: `npm run demo -- --reset`. Los datos de la demostración quedan en `data/demo/`, separados de cualquier instalación real.
 
+**Tickets por correo en la demostración:** en otra ventana, `npm run demo:mail -- --from ana@empresa.com --subject "No tengo internet" --body "Desde las 9 no conecta"` y en unos segundos aparece un ticket nuevo (✉ Creado por correo). Con `--ticket 3` responde al ticket #3.
+
 Limitación: en esta opción **no se envían correos de aviso** (para verlos usa la opción 2 o conecta un SMTP real).
 
 ## Opción 2: con Docker (incluye la bandeja de correos de prueba)

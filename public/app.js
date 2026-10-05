@@ -124,7 +124,7 @@ async function listView() {
     tile('resuelto', 't-ok', count((t) => t.status === 'resuelto'), 'Resueltos', '#/tickets?status=resuelto', 'check');
 
   $('#tbl').innerHTML = rows.length ? `<div class="card" style="padding:8px 12px"><table class="cards"><tr><th>#</th><th>Asunto</th><th>Solicitante</th><th>Depto.</th><th>Prioridad</th><th>Estado</th><th>Asignado</th></tr>
-    ${rows.map((t) => `<tr class="row p-${esc(t.priority)}" data-id="${t.id}"><td class="tid" data-label="Ticket">#${t.id}</td><td class="ttl">${esc(t.title)}${t.resolution ? `<div class="sol">✔ ${esc(t.resolution.length > 110 ? t.resolution.slice(0, 110) + '…' : t.resolution)}</div>` : ''}</td>
+    ${rows.map((t) => `<tr class="row p-${esc(t.priority)}" data-id="${t.id}"><td class="tid" data-label="Ticket">#${t.id}</td><td class="ttl">${t.source === 'email' ? '<span class="src" title="Creado por correo">✉</span> ' : ''}${esc(t.title)}${t.resolution ? `<div class="sol">✔ ${esc(t.resolution.length > 110 ? t.resolution.slice(0, 110) + '…' : t.resolution)}</div>` : ''}</td>
     <td data-label="Solicitante"><span class="who-cell">${avatar(t.requester_name)}<span>${esc(t.requester_name)}</span></span></td>
     <td data-label="Depto.">${esc(t.department)}</td><td data-label="Prioridad">${badge(t.priority)}</td>
     <td data-label="Estado">${badge(t.status)}${isBreached(t) ? ' <span class="badge b-sla">SLA vencido</span>' : ''}</td>
@@ -173,7 +173,7 @@ async function detailView(id) {
   const steps = ['Abierto', 'En progreso', t.status === 'cerrado' ? 'Cerrado' : 'Resuelto'];
   app.innerHTML = `<div class="card"><a href="#/tickets">← Volver a tickets</a>
     <h2 style="margin-top:8px">#${t.id} · ${esc(t.title)}</h2>
-    <div class="meta"><span>${avatar(t.requester_name)} ${esc(t.requester_name)}</span><span>${esc(t.requester_email)}</span><span>${esc(t.department)}</span><span>${esc(t.category)}</span><span>${esc(t.created_at)} UTC</span></div>
+    <div class="meta"><span>${avatar(t.requester_name)} ${esc(t.requester_name)}</span><span>${esc(t.requester_email)}</span><span>${esc(t.department)}</span><span>${esc(t.category)}</span><span>${esc(t.created_at)} UTC</span>${t.source === 'email' ? '<span class="badge b-info">✉ Creado por correo</span>' : ''}</div>
     <div>${badge(t.priority)} ${badge(t.status)}${t.status === 'en_espera' ? ' <span class="muted">· esperando respuesta</span>' : ''} <span class="muted">· Asignado: ${esc(t.assignee_name || 'sin asignar')}</span></div>
     <div class="stepper" aria-label="Progreso">${steps.map((n, i) => `<div class="step ${i < cur || (i === 2 && cur === 2) ? 'done' : ''} ${i === cur && cur < 2 ? 'now' : ''} ${i === 2 && cur === 2 ? 'final' : ''}">${n}</div>`).join('')}</div>
     <div class="sla">${slaBox('Primera respuesta', t.first_response_at, t.response_hours, t.sla_response_target_h, t.sla_response_due, t.sla_response_breached, t.sla_paused)}
@@ -183,6 +183,7 @@ async function detailView(id) {
     ${isStaff() ? `<div class="card"><h3>Gestionar</h3><form id="mgr" class="grid2">
       <div><label>Estado</label><select name="status">${options(meta.statuses, t.status)}</select></div>
       <div><label>Prioridad</label><select name="priority">${options(meta.priorities, t.priority)}</select></div>
+      <div><label>Categoría</label><select name="category">${options(meta.categories, t.category)}</select></div>
       <div><label>Asignar a</label><select name="assignee_id"><option value="">Sin asignar</option>${options(staff.map((s) => ({ id: s.id, name: s.name })), t.assignee_id)}</select></div>
       <div style="grid-column:1/-1"><label>Solución <span class="muted">(obligatoria para resolver o cerrar; el usuario la verá)</span></label>
         <textarea name="resolution" placeholder="¿Cómo se resolvió?">${esc(t.resolution || '')}</textarea></div>

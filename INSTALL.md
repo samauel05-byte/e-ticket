@@ -1,6 +1,9 @@
 # Instalación (Windows, Linux y macOS)
 
-Hay dos formas. Las dos funcionan igual en los tres sistemas porque los scripts de instalación están hechos en Node.js.
+## Cómo funciona (dónde se guarda todo)
+El sistema se instala **una sola vez, en un servidor** de la empresa. Ahí vive la base de datos (`data/eticket.db`) y los archivos adjuntos (`data/uploads/`). Los usuarios no instalan nada: abren la dirección del sistema en su navegador desde cualquier PC o celular, y **todo lo que envían (tickets, comentarios, adjuntos) llega al servidor y se guarda en esa base de datos**. Los correos que lleguen a la bandeja de soporte también se convierten en tickets guardados ahí. Por eso el respaldo es solo el contenido de `data/` (ver "Respaldos").
+
+Hay dos formas de instalarlo. Las dos funcionan igual en los tres sistemas porque los scripts de instalación están hechos en Node.js.
 
 | | **A. Con Docker** (recomendada) | **B. Directa con Node** |
 |---|---|---|

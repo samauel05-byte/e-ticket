@@ -2,6 +2,9 @@ const express = require('express');
 const session = require('express-session');
 const bcrypt = require('bcryptjs');
 const path = require('path');
+const fs = require('fs');
+const crypto = require('crypto');
+const multer = require('multer');
 const db = require('./db');
 const imap = require('./imapAuth');
 const mailer = require('./mailer');
@@ -13,6 +16,23 @@ const PORT = process.env.PORT || 3000;
 const STATUSES = ['abierto', 'en_progreso', 'en_espera', 'resuelto', 'cerrado'];
 const PRIORITIES = ['baja', 'media', 'alta', 'urgente'];
 const CATEGORIES = ['Hardware', 'Software', 'Red / Internet', 'Correo', 'Accesos / Contraseñas', 'Impresoras', 'Otro'];
+
+const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, '..', 'data', 'uploads');
+fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+const MAX_MB = Number(process.env.MAX_UPLOAD_MB) || 10;
+const ALLOWED_EXT = new Set(['.png', '.jpg', '.jpeg', '.gif', '.pdf', '.txt', '.log', '.csv', '.doc', '.docx',
+  '.xls', '.xlsx', '.ppt', '.pptx', '.zip']);
+const upload = multer({
+  storage: multer.diskStorage({
+    destination: UPLOAD_DIR,
+    filename: (req, file, cb) => cb(null, crypto.randomBytes(16).toString('hex') + path.extname(file.originalname).toLowerCase()),
+  }),
+  limits: { fileSize: MAX_MB * 1024 * 1024, files: 5 },
+  fileFilter: (req, file, cb) => {
+    if (ALLOWED_EXT.has(path.extname(file.originalname).toLowerCase())) return cb(null, true);
+    const e = new Error('Tipo de archivo no permitido'); e.status = 400; cb(e);
+  },
+});
 
 const app = express();
 app.use(express.json({ limit: '100kb' }));
@@ -171,6 +191,8 @@ app.post('/api/tickets', auth, wrap((req, res) => {
 app.get('/api/tickets/:id', auth, wrap((req, res) => {
   const t = db.prepare(`${TICKET_SELECT} WHERE t.id = ?`).get(Number(req.params.id));
   if (!t || !canSee(req.user, t)) return res.status(404).json({ error: 'Ticket no encontrado' });
+  t.attachments = db.prepare(`SELECT a.id, a.original_name, a.size, a.created_at, a.user_id, u.name AS author
+    FROM attachments a JOIN users u ON u.id = a.user_id WHERE a.ticket_id = ? ORDER BY a.id`).all(t.id);
   t.comments = db.prepare(`SELECT c.id, c.body, c.created_at, u.name AS author, u.role
     FROM comments c JOIN users u ON u.id = c.user_id WHERE c.ticket_id = ? ORDER BY c.id`).all(t.id);
   res.json(t);
@@ -218,6 +240,48 @@ app.post('/api/tickets/:id/comments', auth, wrap((req, res) => {
   res.status(201).json({ ok: true });
 }));
 
+// ---------- Adjuntos ----------
+const loadTicket = (req, res, next) => {
+  const t = db.prepare('SELECT * FROM tickets WHERE id = ?').get(Number(req.params.id));
+  if (!t || !canSee(req.user, t)) return res.status(404).json({ error: 'Ticket no encontrado' });
+  req.ticket = t;
+  next();
+};
+const rmFiles = (files) => (files || []).forEach((f) => fs.unlink(f.path, () => {}));
+
+app.post('/api/tickets/:id/attachments', auth, loadTicket, upload.array('files', 5), wrap((req, res) => {
+  if (!req.files || !req.files.length) return res.status(400).json({ error: 'No se recibió ningún archivo' });
+  const ins = db.prepare('INSERT INTO attachments (ticket_id, user_id, original_name, stored_name, size) VALUES (?,?,?,?,?)');
+  try {
+    db.transaction(() => req.files.forEach((f) => ins.run(req.ticket.id, req.user.id,
+      // multer entrega el nombre como latin1; se recupera el UTF-8 original
+      Buffer.from(f.originalname, 'latin1').toString('utf8').replace(/[\\/\r\n]/g, '_').slice(0, 200),
+      f.filename, f.size)))();
+  } catch (e) { rmFiles(req.files); throw e; }
+  db.prepare("UPDATE tickets SET updated_at = datetime('now') WHERE id = ?").run(req.ticket.id);
+  res.status(201).json({ ok: true, count: req.files.length });
+}));
+
+app.get('/api/attachments/:id', auth, wrap((req, res) => {
+  const a = db.prepare('SELECT a.*, t.requester_id FROM attachments a JOIN tickets t ON t.id = a.ticket_id WHERE a.id = ?')
+    .get(Number(req.params.id));
+  if (!a || !canSee(req.user, a)) return res.status(404).json({ error: 'Archivo no encontrado' });
+  res.set('X-Content-Type-Options', 'nosniff');
+  res.download(path.join(UPLOAD_DIR, a.stored_name), a.original_name, (err) => {
+    if (err && !res.headersSent) res.status(404).json({ error: 'Archivo no encontrado' });
+  });
+}));
+
+app.delete('/api/attachments/:id', auth, wrap((req, res) => {
+  const a = db.prepare('SELECT a.*, t.requester_id FROM attachments a JOIN tickets t ON t.id = a.ticket_id WHERE a.id = ?')
+    .get(Number(req.params.id));
+  if (!a || !canSee(req.user, a)) return res.status(404).json({ error: 'Archivo no encontrado' });
+  if (a.user_id !== req.user.id && req.user.role !== 'admin') return res.status(403).json({ error: 'Sin permiso' });
+  db.prepare('DELETE FROM attachments WHERE id = ?').run(a.id);
+  fs.unlink(path.join(UPLOAD_DIR, a.stored_name), () => {});
+  res.json({ ok: true });
+}));
+
 app.get('/api/staff', auth, staff, wrap((req, res) => {
   res.json(db.prepare(`${USER_SELECT} WHERE u.role IN ('agent','admin') ORDER BY u.name`).all());
 }));
@@ -259,5 +323,12 @@ app.post('/api/admin/departments', auth, admin, wrap((req, res) => {
     res.status(201).json({ id: info.lastInsertRowid, name });
   } catch { res.status(409).json({ error: 'El departamento ya existe' }); }
 }));
+
+app.use((err, req, res, next) => {
+  if (err instanceof multer.MulterError)
+    return res.status(400).json({ error: err.code === 'LIMIT_FILE_SIZE' ? `El archivo supera ${MAX_MB} MB` : 'Error al subir el archivo (máx. 5 archivos)' });
+  if (err.status === 400) return res.status(400).json({ error: err.message });
+  console.error(err); res.status(500).json({ error: 'Error interno' });
+});
 
 app.listen(PORT, () => console.log(`E-Ticket TI en http://localhost:${PORT} (dominio permitido: @${ALLOWED_DOMAIN})`));

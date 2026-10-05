@@ -23,6 +23,7 @@
     "express": "^5.2.1",
     "express-session": "^1.19.0",
     "imapflow": "^2.2.5",
+    "multer": "^2.4.0",
     "nodemailer": "^10.0.15"
   }
 }

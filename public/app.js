@@ -17,6 +17,14 @@ async function api(path, opts = {}) {
   if (!res.ok) throw new Error(data.error || 'Error');
   return data;
 }
+async function upload(id, files) {
+  if (!files.length) return;
+  const fd = new FormData();
+  [...files].forEach((f) => fd.append('files', f));
+  const res = await fetch(`/api/tickets/${id}/attachments`, { method: 'POST', body: fd });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Error al subir archivos');
+}
+const fmtSize = (n) => (n > 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB');
 const formData = (f) => Object.fromEntries(new FormData(f));
 const options = (list, sel) => list.map((o) => `<option value="${esc(o.id ?? o)}" ${(o.id ?? o) == sel ? 'selected' : ''}>${label(o.name ?? o)}</option>`).join('');
 
@@ -82,12 +90,18 @@ function newView() {
     <div class="grid2"><div><label>Categoría</label><select name="category">${options(meta.categories)}</select></div>
     <div><label>Prioridad</label><select name="priority">${options(meta.priorities, 'media')}</select></div></div>
     <label>Descripción</label><textarea name="description" required></textarea>
+    <label>Adjuntos (opcional)</label><input type="file" name="files" multiple>
+    <p class="muted">Máx. 5 archivos de 10 MB: imágenes, PDF, Office, txt, log, csv, zip.</p>
     <p class="muted">Se registrará a nombre de ${esc(me.name)} (${esc(me.department)}).</p>
     <button>Enviar ticket</button><div class="err" id="err"></div></form></div>`;
   $('#f').onsubmit = async (e) => {
     e.preventDefault();
-    try { const t = await api('/tickets', { method: 'POST', body: formData(e.target) }); location.hash = '#/ticket/' + t.id; }
-    catch (er) { $('#err').textContent = er.message; }
+    const files = e.target.files.files;
+    const body = formData(e.target); delete body.files;
+    let t;
+    try { t = await api('/tickets', { method: 'POST', body }); } catch (er) { return ($('#err').textContent = er.message); }
+    try { await upload(t.id, files); } catch (er) { alert('El ticket se creó, pero los adjuntos fallaron: ' + er.message); }
+    location.hash = '#/ticket/' + t.id;
   };
 }
 
@@ -104,10 +118,22 @@ async function detailView(id) {
       <div><label>Prioridad</label><select name="priority">${options(meta.priorities, t.priority)}</select></div>
       <div><label>Asignar a</label><select name="assignee_id"><option value="">Sin asignar</option>${options(staff.map((s) => ({ id: s.id, name: s.name })), t.assignee_id)}</select></div>
       <div><button>Guardar</button></div></form></div>` : ''}
+    <div class="card"><h3>Adjuntos</h3>
+      ${t.attachments.map((a) => `<div>📎 <a href="/api/attachments/${a.id}">${esc(a.original_name)}</a>
+        <span class="muted">${fmtSize(a.size)} · ${esc(a.author)} · ${esc(a.created_at)} UTC</span>
+        ${a.user_id === me.id || me.role === 'admin' ? `<button class="link" data-del="${a.id}">eliminar</button>` : ''}</div>`).join('') || '<p class="muted">Sin adjuntos.</p>'}
+      <form id="up"><input type="file" name="files" multiple required><button>Subir</button><div class="err" id="uerr"></div></form></div>
     <div class="card"><h3>Comentarios</h3>
       ${t.comments.map((c) => `<div class="comment"><strong>${esc(c.author)}</strong> ${c.role !== 'user' ? '<span class="badge">TI</span>' : ''}
       <span class="muted">${esc(c.created_at)} UTC</span><div style="white-space:pre-wrap">${esc(c.body)}</div></div>`).join('') || '<p class="muted">Sin comentarios.</p>'}
       <form id="cm"><textarea name="body" required placeholder="Escribe un comentario…"></textarea><button>Comentar</button></form></div>`;
+  $('#up').onsubmit = async (e) => {
+    e.preventDefault();
+    try { await upload(id, e.target.files.files); detailView(id); } catch (er) { $('#uerr').textContent = er.message; }
+  };
+  document.querySelectorAll('[data-del]').forEach((b) => (b.onclick = async () => {
+    if (confirm('¿Eliminar este adjunto?')) { await api('/attachments/' + b.dataset.del, { method: 'DELETE' }); detailView(id); }
+  }));
   $('#cm').onsubmit = async (e) => { e.preventDefault(); await api(`/tickets/${id}/comments`, { method: 'POST', body: formData(e.target) }); detailView(id); };
   if (isStaff()) $('#mgr').onsubmit = async (e) => {
     e.preventDefault();

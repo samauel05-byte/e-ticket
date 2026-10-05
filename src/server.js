@@ -3,6 +3,7 @@ const session = require('express-session');
 const bcrypt = require('bcryptjs');
 const path = require('path');
 const db = require('./db');
+const imap = require('./imapAuth');
 
 const ALLOWED_DOMAIN = (process.env.ALLOWED_DOMAIN || 'empresa.com').toLowerCase().replace(/^@/, '');
 const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || '').toLowerCase();
@@ -45,12 +46,13 @@ const admin = (req, res, next) =>
 // ---------- Auth ----------
 app.get('/api/meta', wrap((req, res) => {
   res.json({
-    domain: ALLOWED_DOMAIN, statuses: STATUSES, priorities: PRIORITIES, categories: CATEGORIES,
+    domain: ALLOWED_DOMAIN, imap: imap.enabled(), statuses: STATUSES, priorities: PRIORITIES, categories: CATEGORIES,
     departments: db.prepare('SELECT id, name FROM departments ORDER BY name').all(),
   });
 }));
 
 app.post('/api/register', wrap((req, res) => {
+  if (imap.enabled()) return res.status(404).json({ error: 'Registro deshabilitado: usa tu correo de la empresa para entrar' });
   const email = str(req.body.email, 200).toLowerCase();
   const name = str(req.body.name, 100);
   const password = typeof req.body.password === 'string' ? req.body.password : '';
@@ -72,16 +74,54 @@ app.post('/api/register', wrap((req, res) => {
   });
 }));
 
-app.post('/api/login', wrap((req, res) => {
-  const email = str(req.body.email, 200).toLowerCase();
-  const row = db.prepare('SELECT id, password_hash FROM users WHERE email = ?').get(email);
-  if (!row || !bcrypt.compareSync(String(req.body.password || ''), row.password_hash))
-    return res.status(401).json({ error: 'Correo o contraseña incorrectos' });
-  req.session.regenerate(() => {
-    req.session.userId = row.id;
-    res.json(getUser(row.id));
-  });
-}));
+// Intentos fallidos por correo/IP (en memoria) para frenar fuerza bruta
+const fails = new Map();
+const LOCK_MS = 10 * 60 * 1000, MAX_FAILS = 8;
+const keyOf = (req, email) => `${req.ip}|${email}`;
+const locked = (k) => { const f = fails.get(k); return f && f.n >= MAX_FAILS && Date.now() - f.t < LOCK_MS; };
+const fail = (k) => { const f = fails.get(k); fails.set(k, { n: (f && Date.now() - f.t < LOCK_MS ? f.n : 0) + 1, t: Date.now() }); };
+
+const startSession = (req, res, id) => req.session.regenerate(() => {
+  req.session.userId = id;
+  res.json(getUser(id));
+});
+
+app.post('/api/login', async (req, res) => {
+  try {
+    const email = str(req.body.email, 200).toLowerCase();
+    const password = typeof req.body.password === 'string' ? req.body.password : '';
+    const bad = () => res.status(401).json({ error: 'Correo o contraseña incorrectos' });
+    const k = keyOf(req, email);
+    if (locked(k)) return res.status(429).json({ error: 'Demasiados intentos. Espera unos minutos.' });
+    const row = db.prepare('SELECT id, password_hash FROM users WHERE email = ?').get(email);
+
+    if (!imap.enabled()) {
+      if (!row || !bcrypt.compareSync(password, row.password_hash)) { fail(k); return bad(); }
+      fails.delete(k);
+      return startSession(req, res, row.id);
+    }
+
+    if (!email.endsWith('@' + ALLOWED_DOMAIN) || !password) return bad();
+    // Si el usuario es nuevo y aún no eligió departamento, se valida antes de pedírselo.
+    if (!(await imap.verify(email, password))) { fail(k); return bad(); }
+    fails.delete(k);
+    if (row) return startSession(req, res, row.id);
+
+    const departmentId = Number(req.body.department_id);
+    if (!departmentId) return res.status(200).json({ needs_department: true });
+    if (!db.prepare('SELECT 1 FROM departments WHERE id = ?').get(departmentId))
+      return res.status(400).json({ error: 'Departamento inválido' });
+    const name = str(req.body.name, 100) || email.split('@')[0];
+    const role = email === ADMIN_EMAIL ? 'admin' : 'user';
+    // La contraseña nunca se guarda: el hash '!' no coincide con ninguna contraseña.
+    const info = db.prepare('INSERT INTO users (email, name, password_hash, department_id, role) VALUES (?,?,?,?,?)')
+      .run(email, name, '!imap', departmentId, role);
+    startSession(req, res, info.lastInsertRowid);
+  } catch (e) {
+    if (e.unavailable) return res.status(503).json({ error: e.message });
+    console.error(e); res.status(500).json({ error: 'Error interno' });
+  }
+});
 
 app.post('/api/logout', (req, res) => req.session.destroy(() => res.json({ ok: true })));
 app.get('/api/me', auth, (req, res) => res.json(req.user));

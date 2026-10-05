@@ -22,23 +22,30 @@ const options = (list, sel) => list.map((o) => `<option value="${esc(o.id ?? o)}
 
 // ---------- Auth views ----------
 function authView(mode) {
-  const reg = mode === 'register';
-  app.innerHTML = `<div class="card auth"><h2>${reg ? 'Crear cuenta' : 'Iniciar sesión'}</h2>
-  <form id="f">
-    ${reg ? '<label>Nombre completo</label><input name="name" required>' : ''}
-    <label>Correo de la empresa</label><input name="email" type="email" placeholder="usuario@${esc(meta.domain)}" required>
-    <label>Contraseña</label><input name="password" type="password" minlength="${reg ? 8 : 1}" required>
-    ${reg ? `<label>Departamento</label><select name="department_id">${options(meta.departments)}</select>` : ''}
-    <button>${reg ? 'Registrarme' : 'Entrar'}</button><div class="err" id="err"></div>
-  </form>
-  <p class="muted">${reg ? '¿Ya tienes cuenta? <a href="#/login">Inicia sesión</a>' : '¿Primera vez? <a href="#/register">Regístrate</a>'}</p></div>`;
-  $('#f').onsubmit = async (e) => {
-    e.preventDefault();
-    try {
-      me = await api(reg ? '/register' : '/login', { method: 'POST', body: formData(e.target) });
-      location.hash = '#/tickets'; start();
-    } catch (er) { $('#err').textContent = er.message; }
+  const reg = mode === 'register' && !meta.imap;
+  let needDept = false;
+  const draw = () => {
+    app.innerHTML = `<div class="card auth"><h2>${reg ? 'Crear cuenta' : 'Iniciar sesión'}</h2>
+    <form id="f">
+      ${reg || needDept ? `<label>Nombre completo</label><input name="name" required>` : ''}
+      <label>Correo de la empresa</label><input name="email" type="email" placeholder="usuario@${esc(meta.domain)}" required ${needDept ? 'readonly' : ''}>
+      <label>Contraseña${meta.imap ? ' de tu correo' : ''}</label><input name="password" type="password" minlength="${reg ? 8 : 1}" required ${needDept ? 'readonly' : ''}>
+      ${reg || needDept ? `<label>Departamento</label><select name="department_id">${options(meta.departments)}</select>` : ''}
+      <button>${reg ? 'Registrarme' : needDept ? 'Continuar' : 'Entrar'}</button><div class="err" id="err"></div>
+    </form>
+    ${meta.imap ? '<p class="muted">Usa tu correo y contraseña de la empresa.</p>'
+      : `<p class="muted">${reg ? '¿Ya tienes cuenta? <a href="#/login">Inicia sesión</a>' : '¿Primera vez? <a href="#/register">Regístrate</a>'}</p>`}</div>`;
+    $('#f').onsubmit = async (e) => {
+      e.preventDefault();
+      const body = formData(e.target);
+      try {
+        const r = await api(reg ? '/register' : '/login', { method: 'POST', body });
+        if (r.needs_department) { needDept = true; draw(); $('#f').email.value = body.email; $('#f').password.value = body.password; return; }
+        me = r; location.hash = '#/tickets'; start();
+      } catch (er) { $('#err').textContent = er.message; }
+    };
   };
+  draw();
 }
 
 // ---------- Tickets ----------

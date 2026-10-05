@@ -26,3 +26,4 @@ tr.row{cursor:pointer}tr.row:hover{background:var(--bg)}
 @media(max-width:600px){.grid2{grid-template-columns:1fr}}
 .kpi{text-align:center;margin:0}.kpi .num{font-size:26px;font-weight:700}
 .logo-login{display:block;max-width:220px;max-height:100px;margin:0 auto 14px}.logo-top{height:30px;width:auto}.auth h2{text-align:center}
+@media(prefers-color-scheme:dark){.logo-login,.logo-top{background:#f3f4f6;border-radius:6px;padding:4px 8px}}

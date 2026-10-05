@@ -56,5 +56,41 @@ Prográmalo a diario con cron y copia `./data/backups` y `./data/uploads` a otro
 - Estado: `docker compose ps` · salud de la app: `GET /healthz`
 - Reiniciar no cierra las sesiones (se guardan en la base). Es una sola instancia.
 
+## 7. Publicar en internet (usuarios fuera de la oficina)
+Con el login por IMAP la clave real del correo viaja a esta página, así que **solo se publica con HTTPS válido** y con las defensas de abajo.
+
+**Qué necesitas**
+1. **Un nombre público**, p. ej. `tickets.tuempresa.com` (registro DNS tipo A hacia la IP pública de la oficina o del servidor).
+2. **IP pública fija** (o DNS dinámico) y, en el router/firewall, reenviar los puertos **80 y 443** al servidor. El puerto 80 lo necesita Let's Encrypt para validar y para redirigir a HTTPS.
+3. En `.env`:
+   ```
+   SITE_ADDRESS=tickets.tuempresa.com
+   CADDY_TLS=correo-del-admin@tuempresa.com    # Let's Encrypt: Caddy obtiene y renueva el certificado solo
+   APP_URL=https://tickets.tuempresa.com
+   COOKIE_SECURE=true
+   TRUST_PROXY=true
+   ```
+   Luego `docker compose up -d`. Con un certificado válido los usuarios **no** necesitan instalar nada.
+4. **DNS interno (recomendado):** que dentro de la oficina `tickets.tuempresa.com` resuelva a la IP *local* del servidor; muchos routers no soportan acceder a su propia IP pública.
+5. **No expongas nada más:** abre solo 80 y 443. Los puertos del servidor IMAP/SMTP **no** deben ser públicos (la app los usa desde dentro).
+
+**Defensas incluidas (ajustables en `.env`)**
+| Defensa | Variable (por defecto) |
+|---|---|
+| Bloqueo por IP tras fallos de login, guardado en la base (sobrevive a reinicios) | `LOGIN_MAX_PER_IP=20` en `LOGIN_WINDOW_MIN=15` |
+| Bloqueo por correo tras fallos | `LOGIN_MAX_PER_EMAIL=8` |
+| Retraso de ~0,4 s en cada fallo (frena la fuerza bruta) | `LOGIN_FAIL_DELAY_MS=400` |
+| Tope de comprobaciones simultáneas contra el servidor IMAP (lo protege de saturación) | `IMAP_MAX_CONCURRENT=5` |
+| Administración y Reportes solo desde la red interna | `INTERNAL_CIDRS=192.168.0.0/16,10.0.0.0/8` (vacío = sin restricción) |
+| Sin sesión, la API solo muestra lo mínimo para el login | siempre |
+| HTTPS obligatorio, cookie `Secure`, HSTS y cabeceras de seguridad | `COOKIE_SECURE=true` |
+
+Notas:
+- El bloqueo por correo permite que alguien bloquee a propósito a un compañero durante la ventana (15 min). Es el costo de frenar la fuerza bruta; si ocurre, sube `LOGIN_MAX_PER_EMAIL` o baja `LOGIN_WINDOW_MIN`.
+- Los fallos se registran en los logs (`docker compose logs eticket | grep "login fallido"`). Úsalos para detectar ataques.
+- Caddy reemplaza la cabecera `X-Forwarded-For` con la IP real del cliente; no pongas otro proxy delante sin ajustar `TRUST_PROXY`.
+- **Riesgos que no cubre el sistema:** suplantación (alguien monta una página falsa y pide la clave del correo) y contraseñas filtradas de otros sitios. Avisa a los usuarios la dirección oficial y, si es posible, activa verificación en dos pasos en el correo. La alternativa más segura sería un código por correo en vez de la clave (no implementado).
+- Mantén el servidor actualizado (`apt upgrade`, y `git pull && docker compose up -d --build` para el sistema) y revisa los respaldos.
+
 ## Sin Docker
 `npm ci --omit=dev && npm start` (Node 22+, gestor como systemd o pm2) con un proxy HTTPS propio delante.

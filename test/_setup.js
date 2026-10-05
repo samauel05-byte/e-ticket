@@ -8,7 +8,7 @@ function boot(env = {}) {
   Object.assign(process.env, {
     DB_PATH: path.join(dir, 'test.db'), UPLOAD_DIR: path.join(dir, 'up'),
     ALLOWED_DOMAIN: 'empresa.com', ADMIN_EMAIL: 'admin@empresa.com', SESSION_SECRET: 'test-secret',
-    SMTP_HOST: '', IMAP_HOST: '',
+    SMTP_HOST: '', IMAP_HOST: '', LOGIN_FAIL_DELAY_MS: '0',
   }, env);
   const app = require('../src/server');
   const server = app.listen(0);

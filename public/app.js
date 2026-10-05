@@ -243,7 +243,7 @@ async function reportsView() {
 
 // ---------- Router ----------
 async function route() {
-  if (!meta) meta = await api('/meta');
+  if (!meta || (me && !meta.statuses)) meta = await api('/meta'); // sin sesión el servidor da solo lo mínimo
   const h = location.hash.replace(/^#/, '') || '/tickets';
   document.body.classList.toggle('login', !me);
   if (!me) return authView(h === '/register' ? 'register' : 'login');
@@ -264,6 +264,6 @@ function start() {
   if (me) { $('#who').innerHTML = `${esc(me.name)}<small>${esc(me.department)}</small>`; $('#avatar').textContent = initials(me.name); $('#adminLink').hidden = me.role !== 'admin'; $('#repLink').hidden = !isStaff(); }
   route();
 }
-$('#logout').onclick = async () => { await api('/logout', { method: 'POST' }); me = null; location.hash = '#/login'; start(); };
+$('#logout').onclick = async () => { await api('/logout', { method: 'POST' }); me = null; meta = null; location.hash = '#/login'; start(); };
 window.addEventListener('hashchange', route);
 (async () => { try { me = await api('/me'); } catch { me = null; } start(); })();

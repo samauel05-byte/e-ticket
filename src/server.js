@@ -10,6 +10,8 @@ const SqliteStore = require('./sessionStore');
 const db = require('./db');
 const imap = require('./imapAuth');
 const mailer = require('./mailer');
+const limiter = require('./rateLimit');
+const netAcl = require('./netAcl');
 const sla = require('./sla');
 const { targets: SLA_TARGETS } = sla;
 
@@ -98,11 +100,20 @@ const staff = (req, res, next) =>
 const admin = (req, res, next) =>
   req.user.role === 'admin' ? next() : res.status(403).json({ error: 'Sin permiso' });
 
+// Opcional: Administración y Reportes solo desde la red interna (INTERNAL_CIDRS="192.168.0.0/16,10.0.0.0/8")
+const internalRules = netAcl.parse(process.env.INTERNAL_CIDRS);
+if (internalRules.length)
+  app.use(['/api/admin', '/api/reports'], (req, res, next) =>
+    netAcl.allowed(internalRules, req.ip) ? next() : res.status(403).json({ error: 'Esta sección solo está disponible desde la red interna' }));
+
 // ---------- Auth ----------
 app.get('/api/meta', wrap((req, res) => {
+  const departments = db.prepare('SELECT id, name FROM departments ORDER BY name').all();
+  // Sin sesión solo se expone lo mínimo para mostrar el login (la app puede estar en internet)
+  if (!req.session.userId) return res.json({ domain: ALLOWED_DOMAIN, imap: imap.enabled(), departments });
   res.json({
     domain: ALLOWED_DOMAIN, imap: imap.enabled(), sla: sla.config, statuses: STATUSES, priorities: PRIORITIES, categories: CATEGORIES,
-    departments: db.prepare('SELECT id, name FROM departments ORDER BY name').all(),
+    departments,
   });
 }));
 
@@ -129,13 +140,6 @@ app.post('/api/register', wrap((req, res) => {
   });
 }));
 
-// Intentos fallidos por correo/IP (en memoria) para frenar fuerza bruta
-const fails = new Map();
-const LOCK_MS = 10 * 60 * 1000, MAX_FAILS = 8;
-const keyOf = (req, email) => `${req.ip}|${email}`;
-const locked = (k) => { const f = fails.get(k); return f && f.n >= MAX_FAILS && Date.now() - f.t < LOCK_MS; };
-const fail = (k) => { const f = fails.get(k); fails.set(k, { n: (f && Date.now() - f.t < LOCK_MS ? f.n : 0) + 1, t: Date.now() }); };
-
 const startSession = (req, res, id) => req.session.regenerate(() => {
   req.session.userId = id;
   res.json(getUser(id));
@@ -145,21 +149,25 @@ app.post('/api/login', async (req, res) => {
   try {
     const email = str(req.body.email, 200).toLowerCase();
     const password = typeof req.body.password === 'string' ? req.body.password : '';
-    const bad = () => res.status(401).json({ error: 'Correo o contraseña incorrectos' });
-    const k = keyOf(req, email);
-    if (locked(k)) return res.status(429).json({ error: 'Demasiados intentos. Espera unos minutos.' });
+    const ip = req.ip;
+    const bad = async () => { await limiter.recordFailure(ip, email); return res.status(401).json({ error: 'Correo o contraseña incorrectos' }); };
+    const wait = limiter.blockedFor(ip, email);
+    if (wait) {
+      res.set('Retry-After', String(wait));
+      return res.status(429).json({ error: `Demasiados intentos. Intenta de nuevo en ${Math.ceil(wait / 60)} min.` });
+    }
     const row = db.prepare('SELECT id, password_hash FROM users WHERE email = ?').get(email);
 
     if (!imap.enabled()) {
-      if (!row || !bcrypt.compareSync(password, row.password_hash)) { fail(k); return bad(); }
-      fails.delete(k);
+      if (!row || !bcrypt.compareSync(password, row.password_hash)) return bad();
+      limiter.recordSuccess(email);
       return startSession(req, res, row.id);
     }
 
     if (!email.endsWith('@' + ALLOWED_DOMAIN) || !password) return bad();
     // Si el usuario es nuevo y aún no eligió departamento, se valida antes de pedírselo.
-    if (!(await imap.verify(email, password))) { fail(k); return bad(); }
-    fails.delete(k);
+    if (!(await imap.verify(email, password))) return bad();
+    limiter.recordSuccess(email);
     if (row) return startSession(req, res, row.id);
 
     const departmentId = Number(req.body.department_id);

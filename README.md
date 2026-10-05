@@ -51,4 +51,5 @@ Personal de TI (agent/admin) tiene la pestaña **Reportes**: totales, abiertos, 
 ## Seguridad
 - Sesiones guardadas en SQLite (sobreviven a reinicios; expiran a las 8 h).
 - Cabeceras de seguridad (helmet, CSP) y rechazo de peticiones que modifican datos con `Origin` de otro sitio.
+- Límite de intentos de login por IP y por correo guardado en la base, tope de conexiones simultáneas a IMAP y restricción opcional de Administración/Reportes a la red interna (`INTERNAL_CIDRS`). Para publicarlo en internet ver `DEPLOY.md`, sección 7.
 - Con `NODE_ENV=production` (como en Docker) `SESSION_SECRET` es obligatorio.

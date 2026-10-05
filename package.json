@@ -28,6 +28,7 @@
     "express-session": "^1.19.0",
     "helmet": "^8.3.0",
     "imapflow": "^2.2.5",
+    "mailparser": "^3.9.36",
     "multer": "^2.4.0",
     "nodemailer": "^10.0.15"
   },

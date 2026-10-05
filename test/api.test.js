@@ -117,6 +117,24 @@ test('admin: cambiar rol/departamento; no puede quitarse su propio rol', async (
   assert.ok((await luis.get('/api/tickets')).data.length > 1);
 });
 
+test('SLA: "en espera" pausa y reanudar lo reactiva; cada cambio queda en el historial', async () => {
+  const t = (await newTicket(ana)).data;
+  assert.equal((await admin.patch('/api/tickets/' + t.id, { status: 'en_espera' })).data.sla_paused, true);
+  const back = (await admin.patch('/api/tickets/' + t.id, { status: 'en_progreso' })).data;
+  assert.equal(back.sla_paused, false);
+  const db = require('../src/db');
+  const ev = db.prepare('SELECT status FROM ticket_events WHERE ticket_id = ? ORDER BY id').all(t.id).map((e) => e.status);
+  assert.deepEqual(ev, ['abierto', 'en_espera', 'en_progreso']);
+});
+
+test('almuerzo: el admin asigna turno al personal de TI; turnos inválidos se rechazan', async () => {
+  const me = (await admin.get('/api/me')).data;
+  assert.equal((await admin.patch('/api/admin/users/' + me.id, { lunch_shift: 'A' })).data.lunch_shift, 'A');
+  assert.equal((await admin.patch('/api/admin/users/' + me.id, { lunch_shift: 'Z' })).status, 400);
+  assert.equal((await admin.patch('/api/admin/users/' + me.id, { lunch_shift: '' })).data.lunch_shift, null);
+  assert.equal((await admin.get('/api/meta')).data.sla.LUNCH_SHIFTS.B[1], '14:30');
+});
+
 test('reportes: totales, filtro de fechas y CSV seguro', async () => {
   await newTicket(ana, { title: '=HYPERLINK("http://x","clic")' });
   const r = (await admin.get('/api/reports')).data;

@@ -58,6 +58,22 @@ const cols = db.prepare('PRAGMA table_info(tickets)').all().map((c) => c.name);
 if (!cols.includes('first_response_at')) db.exec('ALTER TABLE tickets ADD COLUMN first_response_at TEXT');
 if (!cols.includes('resolved_at')) db.exec('ALTER TABLE tickets ADD COLUMN resolved_at TEXT');
 
+if (!db.prepare('PRAGMA table_info(users)').all().some((c) => c.name === 'lunch_shift'))
+  db.exec('ALTER TABLE users ADD COLUMN lunch_shift TEXT');
+
+// Historial de estado/responsable por ticket: permite pausar el SLA con exactitud
+db.exec(`CREATE TABLE IF NOT EXISTS ticket_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ticket_id INTEGER NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+  at TEXT NOT NULL DEFAULT (datetime('now')),
+  status TEXT NOT NULL,
+  assignee_id INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_events_ticket ON ticket_events(ticket_id);`);
+db.exec(`INSERT INTO ticket_events (ticket_id, at, status, assignee_id)
+  SELECT id, created_at, status, assignee_id FROM tickets
+  WHERE id NOT IN (SELECT ticket_id FROM ticket_events)`);
+
 const DEFAULT_DEPARTMENTS = [
   'Administración', 'Recursos Humanos', 'Finanzas', 'Ventas', 'Marketing',
   'Operaciones', 'Logística', 'Legal', 'Tecnología',

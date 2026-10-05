@@ -45,6 +45,9 @@ Personal de TI (agent/admin) tiene la pestaña **Reportes**: totales, abiertos, 
 - Los tickets anteriores a esta función se calculan como si siempre hubieran estado en su estado actual.
 
 
+## Ambiente de prueba
+Un comando levanta todo con datos de ejemplo y bandeja de correos de prueba: `./scripts/test-env.sh up`. Ver [TEST.md](TEST.md).
+
 ## Pruebas y CI
 `npm test` ejecuta las pruebas automáticas (API, permisos, SLA, adjuntos, reportes, IMAP con servidor simulado, sesiones). GitHub Actions (`.github/workflows/ci.yml`) las corre en cada PR, además de construir la imagen Docker y comprobar que arranca (`/healthz`) y que se niega a iniciar sin `SESSION_SECRET`.
 

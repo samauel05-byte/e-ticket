@@ -49,7 +49,7 @@ Personal de TI (agent/admin) tiene la pestaña **Reportes**: totales, abiertos, 
 Windows, Linux y macOS, con Docker o directo con Node: ver [INSTALL.md](INSTALL.md).
 
 ## Ambiente de prueba
-Un comando levanta todo con datos de ejemplo y bandeja de correos de prueba: `./scripts/test-env.sh up`. Ver [TEST.md](TEST.md).
+Con datos de ejemplo: `npm run demo` (solo Node, sin Docker) o `./scripts/test-env.sh up` (Docker, con bandeja de correos de prueba). Ver [TEST.md](TEST.md).
 
 ## Pruebas y CI
 `npm test` ejecuta las pruebas automáticas (API, permisos, SLA, adjuntos, reportes, IMAP con servidor simulado, sesiones). GitHub Actions (`.github/workflows/ci.yml`) las corre en cada PR, además de construir la imagen Docker y comprobar que arranca (`/healthz`) y que se niega a iniciar sin `SESSION_SECRET`.

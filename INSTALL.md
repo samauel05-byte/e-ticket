@@ -8,7 +8,7 @@ Hay dos formas. Las dos funcionan igual en los tres sistemas porque los scripts 
 | Qué instalas | Docker | Node.js 22 |
 | Mejor para | Servidor de producción | Pruebas rápidas o equipos sin Docker |
 
-> Para **probar** sin instalar nada en tu PC, usa la máquina virtual con VirtualBox: ver [TEST.md](TEST.md).
+> Para **probar** rápido: instala Node.js y ejecuta `npm run demo` (datos de ejemplo, sin Docker). Ver [TEST.md](TEST.md).
 
 ## A. Con Docker
 
@@ -72,4 +72,4 @@ npm ci --omit=dev && pm2 restart eticket     # directa
 ## Problemas comunes
 - **Windows: "`./scripts/...` no se reconoce"**: en Windows se usa `node scripts/...` o `scripts\...cmd`, no `./`.
 - **`better-sqlite3` no carga** (error al arrancar): el paquete trae binarios para Windows, Linux y macOS (x64 y arm64). En otro sistema hay que compilarlo: instala las herramientas (Windows: "Build Tools for Visual Studio"; macOS: `xcode-select --install`; Linux: `apt install build-essential python3`) y ejecuta `npm rebuild better-sqlite3 --ignore-scripts=false`.
-- **Docker Desktop y VirtualBox a la vez en Windows**: pueden chocar por la virtualización. Para pruebas usa la máquina virtual de [TEST.md](TEST.md) en vez de Docker Desktop.
+- **Docker Desktop y VirtualBox a la vez en Windows**: pueden chocar por la virtualización. Si tienes VirtualBox, usa la instalación directa con Node (opción B) o `npm run demo`.

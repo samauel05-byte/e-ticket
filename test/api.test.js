@@ -91,7 +91,7 @@ test('SLA: la primera respuesta la registra TI, no el solicitante; resolver y re
   assert.ok(d.first_response_at);
   assert.equal(d.sla_response_breached, false);
 
-  const r = (await admin.patch('/api/tickets/' + t.id, { status: 'resuelto' })).data;
+  const r = (await admin.patch('/api/tickets/' + t.id, { status: 'resuelto', resolution: 'Se reinició el servicio' })).data;
   assert.ok(r.resolved_at);
   assert.equal((await admin.patch('/api/tickets/' + t.id, { status: 'en_progreso' })).data.resolved_at, null);
 });
@@ -198,4 +198,71 @@ test('XSS: el título se devuelve como dato, la UI lo escapa (la API no ejecuta 
 
 test('salud: /healthz responde', async () => {
   assert.deepEqual((await client(ctx.base).get('/healthz')).data, { ok: true });
+});
+
+test('solución: es obligatoria para resolver, se guarda y la ve el solicitante', async () => {
+  const t = (await newTicket(ana)).data;
+  const sin = await admin.patch('/api/tickets/' + t.id, { status: 'resuelto' });
+  assert.equal(sin.status, 400);
+  assert.match(sin.data.error, /Solución/);
+  const ok = await admin.patch('/api/tickets/' + t.id, { status: 'resuelto', resolution: 'Se cambió el cable de red' });
+  assert.equal(ok.status, 200);
+  const visto = (await ana.get('/api/tickets/' + t.id)).data;
+  assert.equal(visto.resolution, 'Se cambió el cable de red');
+  assert.equal(visto.status, 'resuelto');
+  // reabrir conserva la solución anterior, y cerrar de nuevo no la vuelve a pedir
+  assert.equal((await admin.patch('/api/tickets/' + t.id, { status: 'en_progreso' })).status, 200);
+  assert.equal((await admin.patch('/api/tickets/' + t.id, { status: 'cerrado' })).status, 200);
+});
+
+test('gerencia: ve todo y el dashboard, pero es de solo lectura', async () => {
+  const g = await register(ctx.base, 'gerencia@empresa.com', 'Gerencia', 1);
+  assert.equal((await admin.patch('/api/admin/users/' + (await g.get('/api/me')).data.id, { role: 'manager' })).data.role, 'manager');
+  const t = (await newTicket(ana)).data;
+  assert.equal((await g.get('/api/tickets/' + t.id)).status, 200);
+  assert.ok((await g.get('/api/tickets')).data.length > 1);
+  assert.equal((await g.get('/api/dashboard')).status, 200);
+  assert.equal((await g.get('/api/reports')).status, 200);
+  assert.equal((await g.get('/api/reports/export.csv')).status, 200);
+  // solo lectura
+  assert.equal((await g.patch('/api/tickets/' + t.id, { status: 'cerrado' })).status, 403);
+  assert.equal((await g.post(`/api/tickets/${t.id}/comments`, { body: 'x' })).status, 403);
+  assert.equal((await g.get('/api/admin/users')).status, 403);
+  const f = new FormData(); f.append('files', new Blob(['x']), 'a.txt');
+  assert.equal((await g.post(`/api/tickets/${t.id}/attachments`, f)).status, 403);
+  // un usuario común no ve el dashboard
+  assert.equal((await ana.get('/api/dashboard')).status, 403);
+  // gerencia sí puede pedir su propio ticket
+  assert.equal((await newTicket(g)).status, 201);
+});
+
+test('dashboard: avance por técnico (porcentaje resuelto), sin asignar y tendencia', async () => {
+  const mk = async (who, asg, resolve) => {
+    const t = (await newTicket(who)).data;
+    await admin.patch('/api/tickets/' + t.id, { assignee_id: asg, ...(resolve ? { status: 'resuelto', resolution: 'ok' } : {}) });
+    return t;
+  };
+  const adminId = (await admin.get('/api/me')).data.id;
+  await mk(ana, adminId, true); await mk(ana, adminId, true); await mk(ana, adminId, false); await mk(luis, adminId, false);
+  await newTicket(ana); // sin asignar
+  const d = (await admin.get('/api/dashboard?days=30')).data;
+  const yo = d.team.find((x) => x.id === adminId);
+  assert.ok(yo.total >= 4 && yo.resolved >= 2);
+  assert.equal(yo.pct_resolved, Math.round((yo.resolved / yo.total) * 1000) / 10);
+  assert.ok(d.unassigned.total >= 1);
+  assert.equal(d.trend.length, 14);
+  const hoy = d.trend[13];
+  assert.ok(hoy.created >= 5 && hoy.resolved >= 2);
+  assert.ok(d.summary.total >= yo.total + d.unassigned.total);
+  assert.ok(Array.isArray(d.by_department));
+});
+
+test('lista: filtro por responsable (y sin asignar)', async () => {
+  const adminId = (await admin.get('/api/me')).data.id;
+  const mios = (await admin.get('/api/tickets?assignee_id=' + adminId)).data;
+  assert.ok(mios.length > 0 && mios.every((t) => t.assignee_id === adminId));
+  const libres = (await admin.get('/api/tickets?assignee_id=none')).data;
+  assert.ok(libres.length > 0 && libres.every((t) => t.assignee_id === null));
+  // un usuario común no puede usar el filtro para ver tickets ajenos
+  assert.ok((await ana.get('/api/tickets?assignee_id=' + adminId)).data.every((t) => t.requester_id === 2));
 });

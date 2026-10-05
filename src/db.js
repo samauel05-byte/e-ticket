@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS users (
   name TEXT NOT NULL,
   password_hash TEXT NOT NULL,
   department_id INTEGER NOT NULL REFERENCES departments(id),
-  role TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('user','agent','admin')),
+  role TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('user','agent','admin','manager')),
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE TABLE IF NOT EXISTS tickets (
@@ -60,6 +60,34 @@ if (!cols.includes('resolved_at')) db.exec('ALTER TABLE tickets ADD COLUMN resol
 
 if (!db.prepare('PRAGMA table_info(users)').all().some((c) => c.name === 'lunch_shift'))
   db.exec('ALTER TABLE users ADD COLUMN lunch_shift TEXT');
+
+// Migración: el rol "manager" (gerencia) no existía en la restricción CHECK de las bases anteriores.
+// SQLite no permite modificarla: se reconstruye la tabla conservando los datos.
+if (!/'manager'/.test(db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='users'").get().sql)) {
+  db.pragma('foreign_keys = OFF');
+  db.transaction(() => {
+    db.exec(`CREATE TABLE users_new (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      email TEXT NOT NULL UNIQUE,
+      name TEXT NOT NULL,
+      password_hash TEXT NOT NULL,
+      department_id INTEGER NOT NULL REFERENCES departments(id),
+      role TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('user','agent','admin','manager')),
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      lunch_shift TEXT
+    );
+    INSERT INTO users_new (id, email, name, password_hash, department_id, role, created_at, lunch_shift)
+      SELECT id, email, name, password_hash, department_id, role, created_at, lunch_shift FROM users;
+    DROP TABLE users;
+    ALTER TABLE users_new RENAME TO users;`);
+  })();
+  db.pragma('foreign_keys = ON');
+}
+
+// Solución escrita por TI al resolver, y origen del ticket (web o correo)
+const ticketCols = db.prepare('PRAGMA table_info(tickets)').all().map((c) => c.name);
+if (!ticketCols.includes('resolution')) db.exec('ALTER TABLE tickets ADD COLUMN resolution TEXT');
+if (!ticketCols.includes('source')) db.exec("ALTER TABLE tickets ADD COLUMN source TEXT NOT NULL DEFAULT 'web'");
 
 // Historial de estado/responsable por ticket: permite pausar el SLA con exactitud
 db.exec(`CREATE TABLE IF NOT EXISTS ticket_events (

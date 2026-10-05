@@ -31,7 +31,7 @@ echo   Bandeja de correo: http://localhost:8025   aqui llegan los avisos
 echo.
 echo   Usuarios, clave prueba1234:
 echo     admin@empresa.com    administrador
-echo     tecnico@empresa.com  personal de TI
+echo     tecnico@, samuel@ y laura@empresa.com  personal de TI
 echo     ana@, luis@ y marta@empresa.com   usuarios que piden tickets
 exit /b 0
 

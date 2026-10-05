@@ -20,7 +20,7 @@ case "$1" in
 
   Usuarios (clave: prueba1234)
     admin@empresa.com    administrador
-    tecnico@empresa.com  personal de TI
+    tecnico@, samuel@ y laura@empresa.com  personal de TI
     ana@ / luis@ / marta@empresa.com   usuarios que piden tickets
 MSG
     ;;

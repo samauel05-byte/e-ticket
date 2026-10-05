@@ -41,7 +41,8 @@ const server = app.listen(port, () => {
 
   Usuarios (clave: prueba1234)
     admin@empresa.com    administrador
-    tecnico@empresa.com  personal de TI
+    tecnico@, samuel@ y laura@empresa.com  personal de TI
+    gerencia@empresa.com  gerencia (dashboard, solo lectura)
     ana@, luis@ y marta@empresa.com   usuarios que piden tickets
 
   Aquí no se envían correos de aviso (para verlos usa el ambiente con Docker, ver TEST.md).

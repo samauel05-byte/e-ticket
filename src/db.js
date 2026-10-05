@@ -53,6 +53,11 @@ CREATE INDEX IF NOT EXISTS idx_tickets_requester ON tickets(requester_id);
 CREATE INDEX IF NOT EXISTS idx_tickets_status ON tickets(status);
 `);
 
+// Migración: columnas para tiempos de respuesta y resolución
+const cols = db.prepare('PRAGMA table_info(tickets)').all().map((c) => c.name);
+if (!cols.includes('first_response_at')) db.exec('ALTER TABLE tickets ADD COLUMN first_response_at TEXT');
+if (!cols.includes('resolved_at')) db.exec('ALTER TABLE tickets ADD COLUMN resolved_at TEXT');
+
 const DEFAULT_DEPARTMENTS = [
   'Administración', 'Recursos Humanos', 'Finanzas', 'Ventas', 'Marketing',
   'Operaciones', 'Logística', 'Legal', 'Tecnología',

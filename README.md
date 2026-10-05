@@ -32,3 +32,10 @@ El envío no bloquea la aplicación: si el SMTP falla, solo se registra el error
 ## Adjuntos
 Se pueden adjuntar archivos al crear un ticket o después desde su detalle (hasta 5 por subida, `MAX_UPLOAD_MB` MB cada uno, 10 por defecto). Tipos permitidos: png, jpg, gif, pdf, txt, log, csv, doc(x), xls(x), ppt(x), zip. Se guardan en `UPLOAD_DIR` (por defecto `data/uploads`, incluido en `.gitignore`) con nombre aleatorio, y solo se descargan a través de la API con sesión: el solicitante y el personal de TI pueden verlos; solo quien lo subió o un admin puede eliminarlo. Incluye `data/` en tus respaldos.
 Despliegue: ver [DEPLOY.md](DEPLOY.md).
+
+## Reportes y tiempos de respuesta
+Personal de TI (agent/admin) tiene la pestaña **Reportes**: totales, abiertos, tiempo promedio de primera respuesta y de resolución, cumplimiento de SLA y tickets abiertos vencidos, desglosados por prioridad, departamento, categoría, responsable y estado, con filtro por fechas y exportación a CSV.
+- *Primera respuesta*: el primer comentario de TI, o el primer cambio de estado/asignación hecho por alguien distinto del solicitante.
+- *Resolución*: cuando el ticket pasa a `resuelto` o `cerrado` (si se reabre, vuelve a contar como abierto).
+- Objetivos por defecto en horas corridas (no laborales): urgente 1/4, alta 4/8, media 8/24, baja 24/72 (respuesta/resolución). Cámbialos con `SLA_JSON='{"alta":{"response":2,"resolve":6}}'`. Si cambia la prioridad de un ticket, el límite se recalcula desde su fecha de creación.
+- Los tickets creados antes de esta función no tienen tiempo de respuesta registrado.

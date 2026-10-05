@@ -3,9 +3,30 @@ services:
     build: .
     restart: unless-stopped
     env_file: .env
-    ports:
-      - "3000:3000"
+    # La app no se expone al exterior: solo Caddy (HTTPS) llega a ella.
+    expose:
+      - "3000"
     volumes:
-      - eticket-data:/app/data
+      # Base de datos (SQLite) y adjuntos en una carpeta LOCAL del servidor: ./data
+      - ./data:/app/data
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on:
+      - eticket
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:-localhost}
+      CADDY_TLS: ${CADDY_TLS:-internal}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./certs:/certs:ro            # certificado propio de la empresa (opcional)
+      - caddy_data:/data             # autoridad interna y certificados emitidos
+      - caddy_config:/config
+
 volumes:
-  eticket-data:
+  caddy_data:
+  caddy_config:

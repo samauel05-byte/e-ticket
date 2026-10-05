@@ -1,3 +1,6 @@
 node_modules
-data/*.db*
+data/
 .env
+certs/*
+!certs/.gitkeep
+backups/

@@ -4,6 +4,7 @@ const bcrypt = require('bcryptjs');
 const path = require('path');
 const db = require('./db');
 const imap = require('./imapAuth');
+const mailer = require('./mailer');
 
 const ALLOWED_DOMAIN = (process.env.ALLOWED_DOMAIN || 'empresa.com').toLowerCase().replace(/^@/, '');
 const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || '').toLowerCase();
@@ -133,6 +134,8 @@ const TICKET_SELECT = `SELECT t.*, r.name AS requester_name, r.email AS requeste
   JOIN departments d ON d.id = t.department_id
   LEFT JOIN users a ON a.id = t.assignee_id`;
 
+const staffEmails = (exceptId) =>
+  db.prepare("SELECT email FROM users WHERE role IN ('agent','admin') AND id != ?").all(exceptId || 0).map((r) => r.email);
 const isStaff = (u) => u.role === 'agent' || u.role === 'admin';
 const canSee = (u, t) => isStaff(u) || t.requester_id === u.id;
 
@@ -157,7 +160,12 @@ app.post('/api/tickets', auth, wrap((req, res) => {
     return res.status(400).json({ error: 'Título, descripción y categoría son obligatorios' });
   const info = db.prepare(`INSERT INTO tickets (title, description, category, priority, requester_id, department_id)
     VALUES (?,?,?,?,?,?)`).run(title, description, category, priority, req.user.id, req.user.department_id);
-  res.status(201).json(db.prepare(`${TICKET_SELECT} WHERE t.id = ?`).get(info.lastInsertRowid));
+  const created = db.prepare(`${TICKET_SELECT} WHERE t.id = ?`).get(info.lastInsertRowid);
+  mailer.notify(req.user.email, 'Recibimos tu solicitud', created,
+    `Hola ${req.user.name}, registramos tu ticket. Te avisaremos cuando haya novedades.`);
+  mailer.notify(staffEmails(req.user.id), `Nuevo ticket (${priority}) de ${req.user.department}`, created,
+    `${req.user.name} (${req.user.email}) creó un ticket de ${category}, prioridad ${priority}.`);
+  res.status(201).json(created);
 }));
 
 app.get('/api/tickets/:id', auth, wrap((req, res) => {
@@ -184,7 +192,14 @@ app.patch('/api/tickets/:id', auth, staff, wrap((req, res) => {
   }
   db.prepare("UPDATE tickets SET status=?, priority=?, assignee_id=?, updated_at=datetime('now') WHERE id=?")
     .run(status, priority, assignee, t.id);
-  res.json(db.prepare(`${TICKET_SELECT} WHERE t.id = ?`).get(t.id));
+  const updated = db.prepare(`${TICKET_SELECT} WHERE t.id = ?`).get(t.id);
+  if (status !== t.status)
+    mailer.notify(updated.requester_email, `Estado: ${status.replace('_', ' ')}`, updated,
+      `El estado de tu ticket cambió de "${t.status.replace('_', ' ')}" a "${status.replace('_', ' ')}".`);
+  if (assignee && assignee !== t.assignee_id && assignee !== req.user.id)
+    mailer.notify(getUser(assignee).email, 'Se te asignó un ticket', updated,
+      `${req.user.name} te asignó este ticket (prioridad ${priority}).`);
+  res.json(updated);
 }));
 
 app.post('/api/tickets/:id/comments', auth, wrap((req, res) => {
@@ -194,6 +209,12 @@ app.post('/api/tickets/:id/comments', auth, wrap((req, res) => {
   if (!body) return res.status(400).json({ error: 'El comentario está vacío' });
   db.prepare('INSERT INTO comments (ticket_id, user_id, body) VALUES (?,?,?)').run(t.id, req.user.id, body);
   db.prepare("UPDATE tickets SET updated_at = datetime('now') WHERE id = ?").run(t.id);
+  const full = db.prepare(`${TICKET_SELECT} WHERE t.id = ?`).get(t.id);
+  let to;
+  if (req.user.id === t.requester_id) {
+    to = t.assignee_id ? getUser(t.assignee_id)?.email : staffEmails(req.user.id);
+  } else to = full.requester_email;
+  mailer.notify(to, 'Nuevo comentario', full, `${req.user.name} comentó:\n\n${body}`);
   res.status(201).json({ ok: true });
 }));
 

@@ -19,3 +19,12 @@ Abre http://localhost:3000.
 
 ## Inicio de sesión con IMAP
 Define `IMAP_HOST` (y opcionalmente `IMAP_PORT`, `IMAP_SECURE`, `IMAP_USER_FORMAT`) para que los usuarios entren con la contraseña de su correo corporativo; el servidor solo comprueba que el IMAP la acepte y **no la guarda**. En el primer acceso el usuario elige su nombre y departamento. Con IMAP activo el registro local queda deshabilitado. Hay un bloqueo temporal tras 8 intentos fallidos por correo/IP (en memoria).
+
+## Avisos por correo (SMTP)
+Define `SMTP_HOST` (+ `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`, `APP_URL`). Se envía correo cuando:
+- se crea un ticket: confirmación al solicitante y aviso al personal de TI (agent/admin);
+- cambia el estado: al solicitante;
+- se asigna un ticket: al responsable asignado;
+- hay un comentario: al solicitante si comenta TI; al responsable (o a todo TI si no hay) si comenta el solicitante.
+
+El envío no bloquea la aplicación: si el SMTP falla, solo se registra el error en la consola.

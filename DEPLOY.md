@@ -1,5 +1,7 @@
 # Despliegue en servidor propio
 
+> Instalar en Windows, Linux o macOS (con Docker o directo con Node): ver [INSTALL.md](INSTALL.md). Esta guía cubre la operación con Docker y Caddy.
+
 Arquitectura: **Caddy** (HTTPS, puertos 80/443) → **e-ticket** (Node, solo accesible por Caddy).
 La base de datos (SQLite) y los adjuntos viven en la carpeta local **`./data`** del servidor.
 
@@ -11,8 +13,8 @@ La base de datos (SQLite) y los adjuntos viven en la carpeta local **`./data`** 
 ## 2. Instalar
 ```bash
 git clone https://github.com/samauel05-byte/e-ticket && cd e-ticket
-./scripts/setup.sh          # crea ./data (permisos), ./certs y .env
-nano .env                   # ver "Variables" abajo
+node scripts/setup.js --mode docker     # asistente: crea .env (con SESSION_SECRET), ./data y ./certs
+# (o a mano: cp .env.example .env y editarlo; ver "Variables" abajo)
 docker compose up -d --build
 ```
 Abre `https://<SITE_ADDRESS>`. Entra con `ADMIN_EMAIL`: queda como administrador.
@@ -42,11 +44,11 @@ La contraseña del correo viaja al servidor: HTTPS es obligatorio.
 ## 5. Respaldos
 Todo lo importante está en `./data` (`eticket.db` y `uploads/`).
 ```bash
-./scripts/backup-docker.sh        # copia consistente de la BD en ./data/backups (con la app en marcha)
+node scripts/backup.js --docker        # copia consistente de la BD en ./data/backups (con la app en marcha)
 ```
 Prográmalo a diario con cron y copia `./data/backups` y `./data/uploads` a otro equipo:
 ```
-0 2 * * * cd /ruta/e-ticket && ./scripts/backup-docker.sh >> backup.log 2>&1
+0 2 * * * cd /ruta/e-ticket && node scripts/backup.js --docker >> backup.log 2>&1
 ```
 **Restaurar:** `docker compose down`, copia el `.db` elegido a `data/eticket.db` (borra `eticket.db-wal` y `-shm` si existen), `docker compose up -d`.
 

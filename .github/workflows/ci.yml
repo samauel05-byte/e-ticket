@@ -7,7 +7,12 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # Pruebas automáticas en los tres sistemas
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -41,11 +46,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Preparar carpetas y .env
-        run: |
-          ./scripts/setup.sh
-          sed -i 's/^SESSION_SECRET=.*/SESSION_SECRET=ci-secret/' .env
-          printf 'SITE_ADDRESS=localhost\nCADDY_TLS=internal\n' >> .env
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Preparar carpetas y .env con el asistente
+        run: node scripts/setup.js --yes --mode docker --site localhost --tls internal --tz UTC
       - run: docker compose up -d --build
       - name: La app responde por HTTPS a través de Caddy
         run: |
@@ -63,7 +68,7 @@ jobs:
         run: test -f data/eticket.db
       - name: Respaldo consistente
         run: |
-          ./scripts/backup-docker.sh
+          node scripts/backup.js --docker
           ls data/backups/eticket-*.db
       - name: Los datos sobreviven a recrear los contenedores
         run: |
@@ -99,3 +104,38 @@ jobs:
           if docker compose -f docker-compose.test.yml exec -T -e DEMO_SEED=false eticket node src/seedDemo.js; then
             echo "la siembra no debió ejecutarse"; exit 1
           fi
+
+  native:
+    # Instalación nativa (solo Node) en Windows, Linux y macOS: asistente, arranque, healthz y respaldo
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --omit=dev
+      - name: Asistente de instalación
+        run: node scripts/setup.js --yes --mode native --domain empresa.com --admin admin@empresa.com --tz UTC
+      - name: Arrancar y comprobar /healthz
+        run: |
+          node src/server.js > server.log 2>&1 &
+          for i in $(seq 1 40); do
+            if curl -fsS http://localhost:3000/healthz; then ok=1; break; fi
+            sleep 1
+          done
+          if [ "$ok" != 1 ]; then cat server.log; exit 1; fi
+      - name: Entrar a la interfaz y crear un usuario por registro local
+        run: |
+          curl -fsS -H 'Content-Type: application/json' -d '{"email":"ana@empresa.com","name":"Ana","password":"password123","department_id":3}' http://localhost:3000/api/register
+      - name: Respaldo
+        run: |
+          node scripts/backup.js --dest backups
+          ls backups

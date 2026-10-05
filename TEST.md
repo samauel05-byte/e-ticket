@@ -35,6 +35,16 @@ Usuarios de ejemplo (clave **prueba1234**, dominio `@empresa.com`):
 | `tecnico@` | personal de TI |
 | `ana@`, `luis@`, `marta@` | usuarios que piden tickets |
 
+## Opción con VirtualBox (sin instalar Docker en tu PC)
+Crea una máquina virtual Ubuntu con Docker y el sistema ya funcionando. Sirve en Windows, Linux y macOS con procesador Intel/AMD (no Apple Silicon). Necesitas [VirtualBox](https://www.virtualbox.org/) y [Vagrant](https://developer.hashicorp.com/vagrant/downloads) (`winget install Hashicorp.Vagrant` en Windows, `brew install --cask vagrant` en macOS).
+```
+git clone https://github.com/samauel05-byte/e-ticket
+cd e-ticket
+git checkout claude/affectionate-mendel-qa73m1   # mientras la mejora no esté en main
+vagrant up
+```
+La primera vez tarda 10-15 minutos. Después abre http://localhost:3000 (sistema) y http://localhost:8025 (correos de prueba). Con `EXPOSE_LAN=1 vagrant up` otros equipos de tu red pueden entrar a la IP de tu PC en esos puertos. `vagrant halt` apaga la máquina, `vagrant destroy` la borra, `vagrant ssh` entra a ella.
+
 ## Qué probar
 1. Entra como `ana@` y crea un ticket con un archivo adjunto. Mira la lista, el detalle y que solo ves tus tickets.
 2. Entra como `tecnico@`: ve todos los tickets, cámbiale el estado, asígnalo y comenta. Revisa en http://localhost:8025 los correos que recibió Ana.

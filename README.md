@@ -45,6 +45,9 @@ Personal de TI (agent/admin) tiene la pestaña **Reportes**: totales, abiertos, 
 - Los tickets anteriores a esta función se calculan como si siempre hubieran estado en su estado actual.
 
 
+## Instalación
+Windows, Linux y macOS, con Docker o directo con Node: ver [INSTALL.md](INSTALL.md).
+
 ## Ambiente de prueba
 Un comando levanta todo con datos de ejemplo y bandeja de correos de prueba: `./scripts/test-env.sh up`. Ver [TEST.md](TEST.md).
 

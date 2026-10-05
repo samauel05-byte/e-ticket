@@ -4,6 +4,10 @@ const bcrypt = require('bcryptjs');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+// Instalación nativa: cargar .env (o ENV_FILE) cuando se ejecuta directamente. No pisa variables ya definidas.
+if (require.main === module) {
+  try { process.loadEnvFile(process.env.ENV_FILE || path.join(__dirname, '..', '.env')); } catch { /* sin .env: se usan las variables del entorno */ }
+}
 const multer = require('multer');
 const helmet = require('helmet');
 const SqliteStore = require('./sessionStore');
@@ -41,7 +45,11 @@ const upload = multer({
 });
 
 const app = express();
-if (process.env.TRUST_PROXY) app.set('trust proxy', process.env.TRUST_PROXY === 'true' ? 1 : process.env.TRUST_PROXY);
+{
+  // TRUST_PROXY: "true" = un proxy delante (Caddy); "false"/vacío = ninguno; un número = saltos; o una lista de IP/redes
+  const tp = String(process.env.TRUST_PROXY || '').trim();
+  if (tp && !/^(false|0|no)$/i.test(tp)) app.set('trust proxy', /^(true|yes|si)$/i.test(tp) ? 1 : /^\d+$/.test(tp) ? Number(tp) : tp);
+}
 app.get('/healthz', (req, res) => res.json({ ok: true }));
 if (process.env.NODE_ENV === 'production' && !process.env.SESSION_SECRET) {
   console.error('Falta SESSION_SECRET (obligatorio en producción)');

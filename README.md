@@ -31,3 +31,4 @@ El envío no bloquea la aplicación: si el SMTP falla, solo se registra el error
 
 ## Adjuntos
 Se pueden adjuntar archivos al crear un ticket o después desde su detalle (hasta 5 por subida, `MAX_UPLOAD_MB` MB cada uno, 10 por defecto). Tipos permitidos: png, jpg, gif, pdf, txt, log, csv, doc(x), xls(x), ppt(x), zip. Se guardan en `UPLOAD_DIR` (por defecto `data/uploads`, incluido en `.gitignore`) con nombre aleatorio, y solo se descargan a través de la API con sesión: el solicitante y el personal de TI pueden verlos; solo quien lo subió o un admin puede eliminarlo. Incluye `data/` en tus respaldos.
+Despliegue: ver [DEPLOY.md](DEPLOY.md).

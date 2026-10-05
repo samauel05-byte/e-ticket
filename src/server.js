@@ -35,6 +35,8 @@ const upload = multer({
 });
 
 const app = express();
+if (process.env.TRUST_PROXY) app.set('trust proxy', process.env.TRUST_PROXY === 'true' ? 1 : process.env.TRUST_PROXY);
+app.get('/healthz', (req, res) => res.json({ ok: true }));
 app.use(express.json({ limit: '100kb' }));
 app.use(session({
   secret: process.env.SESSION_SECRET || 'cambia-este-secreto-en-produccion',

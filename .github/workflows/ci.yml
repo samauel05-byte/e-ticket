@@ -35,3 +35,39 @@ jobs:
       - name: Sin SESSION_SECRET no debe arrancar
         run: |
           if docker run --rm eticket:ci; then echo "debió fallar"; exit 1; fi
+
+  stack:
+    # Docker Compose completo: Caddy (HTTPS) + app + base de datos local en ./data
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Preparar carpetas y .env
+        run: |
+          ./scripts/setup.sh
+          sed -i 's/^SESSION_SECRET=.*/SESSION_SECRET=ci-secret/' .env
+          printf 'SITE_ADDRESS=localhost\nCADDY_TLS=internal\n' >> .env
+      - run: docker compose up -d --build
+      - name: La app responde por HTTPS a través de Caddy
+        run: |
+          for i in $(seq 1 40); do
+            curl -fsSk https://localhost/healthz && exit 0
+            sleep 1
+          done
+          docker compose logs
+          exit 1
+      - name: HTTP redirige a HTTPS
+        run: curl -sS -o /dev/null -w '%{http_code}\n' http://localhost/ | grep -E '^30[1278]$'
+      - name: La app no es accesible directamente (solo Caddy)
+        run: if curl -fsS --max-time 3 http://localhost:3000/healthz; then echo "puerto 3000 expuesto"; exit 1; fi
+      - name: La base de datos queda en ./data
+        run: test -f data/eticket.db
+      - name: Respaldo consistente
+        run: |
+          ./scripts/backup-docker.sh
+          ls data/backups/eticket-*.db
+      - name: Los datos sobreviven a recrear los contenedores
+        run: |
+          docker compose down
+          docker compose up -d
+          for i in $(seq 1 40); do curl -fsSk https://localhost/healthz && exit 0; sleep 1; done
+          docker compose logs; exit 1

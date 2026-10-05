@@ -1,0 +1,13 @@
+# HTTPS delante de la app. Variables (en .env):
+#   SITE_ADDRESS  nombre con el que los usuarios abren el sistema, p. ej. tickets.empresa.local
+#   CADDY_TLS     "internal"                          -> autoridad certificadora propia de Caddy (red interna)
+#                 "/certs/cert.pem /certs/key.pem"    -> certificado de la empresa (carpeta ./certs)
+#                 "correo@empresa.com"                -> Let's Encrypt (solo si el nombre es público)
+{$SITE_ADDRESS} {
+	tls {$CADDY_TLS}
+	encode gzip
+	request_body {
+		max_size 60MB
+	}
+	reverse_proxy eticket:3000
+}

@@ -71,5 +71,5 @@ npm ci --omit=dev && pm2 restart eticket     # directa
 
 ## Problemas comunes
 - **Windows: "`./scripts/...` no se reconoce"**: en Windows se usa `node scripts/...` o `scripts\...cmd`, no `./`.
-- **`npm ci` falla compilando `better-sqlite3`**: normalmente baja un binario ya compilado; si no lo encuentra, instala las herramientas de compilación (Windows: "Build Tools for Visual Studio"; macOS: `xcode-select --install`; Linux: `apt install build-essential python3`).
+- **`better-sqlite3` no carga** (error al arrancar): el paquete trae binarios para Windows, Linux y macOS (x64 y arm64). En otro sistema hay que compilarlo: instala las herramientas (Windows: "Build Tools for Visual Studio"; macOS: `xcode-select --install`; Linux: `apt install build-essential python3`) y ejecuta `npm rebuild better-sqlite3 --ignore-scripts=false`.
 - **Docker Desktop y VirtualBox a la vez en Windows**: pueden chocar por la virtualización. Para pruebas usa la máquina virtual de [TEST.md](TEST.md) en vez de Docker Desktop.

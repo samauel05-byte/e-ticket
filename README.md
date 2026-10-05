@@ -42,3 +42,11 @@ Personal de TI (agent/admin) tiene la pestaña **Reportes**: totales, abiertos, 
 
 ## Logo
 Coloca el logo de Grupo Dupla en `public/logo.png` (PNG con fondo transparente, ancho ≥ 400 px). Se muestra en el inicio de sesión y en la barra superior; si el archivo no existe, simplemente no aparece.
+
+## Pruebas y CI
+`npm test` ejecuta las pruebas automáticas (API, permisos, SLA, adjuntos, reportes, IMAP con servidor simulado, sesiones). GitHub Actions (`.github/workflows/ci.yml`) las corre en cada PR, además de construir la imagen Docker y comprobar que arranca (`/healthz`) y que se niega a iniciar sin `SESSION_SECRET`.
+
+## Seguridad
+- Sesiones guardadas en SQLite (sobreviven a reinicios; expiran a las 8 h).
+- Cabeceras de seguridad (helmet, CSP) y rechazo de peticiones que modifican datos con `Origin` de otro sitio.
+- Con `NODE_ENV=production` (como en Docker) `SESSION_SECRET` es obligatorio.

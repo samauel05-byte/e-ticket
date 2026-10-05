@@ -39,3 +39,6 @@ Personal de TI (agent/admin) tiene la pestaña **Reportes**: totales, abiertos, 
 - *Resolución*: cuando el ticket pasa a `resuelto` o `cerrado` (si se reabre, vuelve a contar como abierto).
 - Objetivos por defecto en horas corridas (no laborales): urgente 1/4, alta 4/8, media 8/24, baja 24/72 (respuesta/resolución). Cámbialos con `SLA_JSON='{"alta":{"response":2,"resolve":6}}'`. Si cambia la prioridad de un ticket, el límite se recalcula desde su fecha de creación.
 - Los tickets creados antes de esta función no tienen tiempo de respuesta registrado.
+
+## Logo
+Coloca el logo de Grupo Dupla en `public/logo.png` (PNG con fondo transparente, ancho ≥ 400 px). Se muestra en el inicio de sesión y en la barra superior; si el archivo no existe, simplemente no aparece.

@@ -33,7 +33,7 @@ function authView(mode) {
   const reg = mode === 'register' && !meta.imap;
   let needDept = false;
   const draw = () => {
-    app.innerHTML = `<div class="card auth"><h2>${reg ? 'Crear cuenta' : 'Iniciar sesión'}</h2>
+    app.innerHTML = `<div class="card auth"><img class="logo-login" src="logo.png" alt="Grupo Dupla" onerror="this.remove()"><h2>${reg ? 'Crear cuenta' : 'Iniciar sesión'}</h2>
     <form id="f">
       ${reg || needDept ? `<label>Nombre completo</label><input name="name" required>` : ''}
       <label>Correo de la empresa</label><input name="email" type="email" placeholder="usuario@${esc(meta.domain)}" required ${needDept ? 'readonly' : ''}>

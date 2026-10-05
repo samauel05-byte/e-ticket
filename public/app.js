@@ -55,7 +55,7 @@ function authView(mode) {
   let needDept = false;
   const draw = () => {
     app.innerHTML = `<div class="split">
-    <aside class="brandpanel"><span class="logochip"><img class="logo-login" src="logo.png" alt="Grupo Dupla"></span>
+    <aside class="brandpanel"><span class="logochip"><img class="logo-login" src="logo-light.png" alt="Grupo Dupla"></span>
       <h1>Soporte de <span>Tecnología</span></h1>
       <p>Pide ayuda en segundos y sigue cada solicitud hasta que queda resuelta.</p>
       <ul class="feats">

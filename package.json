@@ -1,0 +1,26 @@
+{
+  "name": "e-ticket",
+  "version": "1.0.0",
+  "description": "Sistema de tickets de TI",
+  "main": "index.js",
+  "scripts": {
+    "start": "node src/server.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/samauel05-byte/e-ticket.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/samauel05-byte/e-ticket/issues"
+  },
+  "homepage": "https://github.com/samauel05-byte/e-ticket#readme",
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "better-sqlite3": "^13.0.3",
+    "express": "^5.2.1",
+    "express-session": "^1.19.0"
+  }
+}

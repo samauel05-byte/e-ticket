@@ -108,6 +108,15 @@ function newView() {
   };
 }
 
+const fmtH = (h) => (h < 1 ? Math.round(h * 60) + ' min' : (Math.round(h * 10) / 10) + ' h');
+function slaLine(name, doneAt, usedH, targetH, due, breached, paused) {
+  const goal = `objetivo ${targetH} h hábiles`;
+  if (doneAt) return `${name}: ${esc(doneAt)} UTC · ${fmtH(usedH)} hábiles (${goal})${breached ? ' · <b class="err">fuera de SLA</b>' : ''}`;
+  if (breached) return `${name}: pendiente · <b class="err">vencido</b> (${goal})`;
+  if (paused) return `${name}: pendiente · reloj en pausa (${goal})`;
+  return `${name}: pendiente · límite ${due ? esc(new Date(due).toLocaleString()) : '—'} (${goal})`;
+}
+
 async function detailView(id) {
   const t = await api('/tickets/' + id);
   const staff = isStaff() ? await api('/staff') : [];
@@ -115,8 +124,8 @@ async function detailView(id) {
     <h2>#${t.id} · ${esc(t.title)}</h2>
     <p class="muted">${esc(t.requester_name)} (${esc(t.requester_email)}) · ${esc(t.department)} · ${esc(t.category)} · ${esc(t.created_at)} UTC</p>
     <p>${badge(t.priority)} ${badge(t.status)} · Asignado: ${esc(t.assignee_name || '—')}</p>
-    <p class="muted">Primera respuesta: ${t.first_response_at ? esc(t.first_response_at) + ' UTC' : 'pendiente'} (límite ${new Date(t.sla_response_due).toLocaleString()}${t.sla_response_breached ? ' · <b class="err">vencido</b>' : ''})<br>
-    Resolución: ${t.resolved_at ? esc(t.resolved_at) + ' UTC' : 'pendiente'} (límite ${new Date(t.sla_resolve_due).toLocaleString()}${t.sla_resolve_breached ? ' · <b class="err">vencido</b>' : ''})</p>
+    <p class="muted">${slaLine('Primera respuesta', t.first_response_at, t.response_hours, t.sla_response_target_h, t.sla_response_due, t.sla_response_breached, t.sla_paused)}<br>
+    ${slaLine('Resolución', t.resolved_at, t.resolve_hours, t.sla_resolve_target_h, t.sla_resolve_due, t.sla_resolve_breached, t.sla_paused)}</p>
     <p style="white-space:pre-wrap">${esc(t.description)}</p></div>
     ${isStaff() ? `<div class="card"><h3>Gestionar</h3><form id="mgr" class="grid2">
       <div><label>Estado</label><select name="status">${options(meta.statuses, t.status)}</select></div>
@@ -151,11 +160,12 @@ async function detailView(id) {
 async function adminView() {
   if (me.role !== 'admin') return (location.hash = '#/tickets');
   const users = await api('/admin/users');
-  app.innerHTML = `<div class="card"><h2>Usuarios</h2><table><tr><th>Nombre</th><th>Correo</th><th>Departamento</th><th>Rol</th></tr>
+  app.innerHTML = `<div class="card"><h2>Usuarios</h2><table><tr><th>Nombre</th><th>Correo</th><th>Departamento</th><th>Rol</th><th>Almuerzo (TI)</th></tr>
     ${users.map((u) => `<tr data-id="${u.id}"><td>${esc(u.name)}</td><td>${esc(u.email)}</td>
     <td><select data-f="department_id">${options(meta.departments, u.department_id)}</select></td>
-    <td><select data-f="role">${options(['user', 'agent', 'admin'], u.role)}</select></td></tr>`).join('')}</table>
-    <div class="err" id="err"></div><p class="muted">user = solicita tickets · agent = personal de TI · admin = administra todo</p></div>
+    <td><select data-f="role">${options(['user', 'agent', 'admin'], u.role)}</select></td>
+    <td>${u.role === 'user' ? '<span class="muted">—</span>' : `<select data-f="lunch_shift"><option value="">Sin turno</option>${Object.entries(meta.sla.LUNCH_SHIFTS).map(([k, v]) => `<option value="${esc(k)}" ${u.lunch_shift === k ? 'selected' : ''}>Turno ${esc(k)} (${esc(v[0])}–${esc(v[1])})</option>`).join('')}</select>`}</td></tr>`).join('')}</table>
+    <div class="err" id="err"></div><p class="muted">Horario laboral SLA: ${esc(String(meta.sla.START[0]).padStart(2, '0'))}:${esc(String(meta.sla.START[1]).padStart(2, '0'))}–${esc(String(meta.sla.END[0]).padStart(2, '0'))}:${esc(String(meta.sla.END[1]).padStart(2, '0'))} (${esc(meta.sla.TZ)}). El almuerzo pausa el SLA de los tickets asignados a esa persona.</p><p class="muted">user = solicita tickets · agent = personal de TI · admin = administra todo</p></div>
     <div class="card"><h3>Nuevo departamento</h3><form id="dep"><input name="name" required><button>Agregar</button></form></div>`;
   document.querySelectorAll('tr[data-id] select').forEach((s) => (s.onchange = async () => {
     try { await api('/admin/users/' + s.closest('tr').dataset.id, { method: 'PATCH', body: { [s.dataset.f]: s.value } }); $('#err').textContent = ''; }
@@ -184,11 +194,11 @@ async function reportsView() {
     <div><label>Hasta</label><input type="date" name="to" value="${esc(r.to || '')}"></div><button>Aplicar</button>
     <a href="/api/reports/export.csv?${esc(params)}" style="align-self:end;padding:8px">⬇ Exportar CSV</a></form></div>
     <div class="grid2" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr))">
-      ${[['Tickets', s.total], ['Abiertos', s.open], ['Resp. promedio', h(s.avg_response_h)], ['Resolución prom.', h(s.avg_resolve_h)],
+      ${[['Tickets', s.total], ['Abiertos', s.open], ['Resp. promedio (h háb.)', h(s.avg_response_h)], ['Resolución prom. (h háb.)', h(s.avg_resolve_h)],
         ['Cumple SLA resp.', p(s.response_sla_pct)], ['Cumple SLA resol.', p(s.resolve_sla_pct)], ['Abiertos vencidos', r.overdue_open]]
         .map(([k, v]) => `<div class="card kpi"><div class="muted">${k}</div><div class="num">${v}</div></div>`).join('')}</div>
     ${tbl('Por prioridad', r.by_priority)}${tbl('Por departamento', r.by_department)}${tbl('Por categoría', r.by_category)}${tbl('Por responsable', r.by_assignee)}${tbl('Por estado', r.by_status)}
-    <p class="muted">Objetivos (horas corridas) — ${Object.entries(r.sla_targets).map(([k, v]) => `${k}: respuesta ${v.response} h / resolución ${v.resolve} h`).join(' · ')}</p>`;
+    <p class="muted">Objetivos en horas hábiles — ${Object.entries(r.sla_targets).map(([k, v]) => `${k}: respuesta ${v.response} h / resolución ${v.resolve} h`).join(' · ')}</p>`;
   $('#rf').onsubmit = (e) => {
     e.preventDefault();
     location.hash = '#/reports?' + new URLSearchParams([...new FormData(e.target)].filter(([, v]) => v));

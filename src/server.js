@@ -10,7 +10,8 @@ const SqliteStore = require('./sessionStore');
 const db = require('./db');
 const imap = require('./imapAuth');
 const mailer = require('./mailer');
-const { withSla, targets: SLA_TARGETS } = require('./sla');
+const sla = require('./sla');
+const { targets: SLA_TARGETS } = sla;
 
 const ALLOWED_DOMAIN = (process.env.ALLOWED_DOMAIN || 'empresa.com').toLowerCase().replace(/^@/, '');
 const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || '').toLowerCase();
@@ -74,8 +75,16 @@ const wrap = (fn) => (req, res) => {
 };
 const str = (v, max) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
 
-const USER_SELECT = `SELECT u.id, u.email, u.name, u.role, u.department_id, d.name AS department
+const USER_SELECT = `SELECT u.id, u.email, u.name, u.role, u.lunch_shift, u.department_id, d.name AS department
   FROM users u JOIN departments d ON d.id = u.department_id`;
+// SLA con historial de estado/responsable y almuerzo del responsable
+const eventsStmt = db.prepare('SELECT at, status, assignee_id FROM ticket_events WHERE ticket_id = ? ORDER BY id');
+const lunchStmt = db.prepare('SELECT lunch_shift FROM users WHERE id = ?');
+const withSla = (t) => sla.withSla(t, {
+  events: t.id ? eventsStmt.all(t.id) : [],
+  lunchFor: (uid) => (uid ? lunchStmt.get(uid)?.lunch_shift : null),
+});
+const logEvent = db.prepare('INSERT INTO ticket_events (ticket_id, status, assignee_id) VALUES (?,?,?)');
 const getUser = (id) => db.prepare(`${USER_SELECT} WHERE u.id = ?`).get(id);
 
 function auth(req, res, next) {
@@ -92,7 +101,7 @@ const admin = (req, res, next) =>
 // ---------- Auth ----------
 app.get('/api/meta', wrap((req, res) => {
   res.json({
-    domain: ALLOWED_DOMAIN, imap: imap.enabled(), statuses: STATUSES, priorities: PRIORITIES, categories: CATEGORIES,
+    domain: ALLOWED_DOMAIN, imap: imap.enabled(), sla: sla.config, statuses: STATUSES, priorities: PRIORITIES, categories: CATEGORIES,
     departments: db.prepare('SELECT id, name FROM departments ORDER BY name').all(),
   });
 }));
@@ -205,6 +214,7 @@ app.post('/api/tickets', auth, wrap((req, res) => {
     return res.status(400).json({ error: 'Título, descripción y categoría son obligatorios' });
   const info = db.prepare(`INSERT INTO tickets (title, description, category, priority, requester_id, department_id)
     VALUES (?,?,?,?,?,?)`).run(title, description, category, priority, req.user.id, req.user.department_id);
+  logEvent.run(info.lastInsertRowid, 'abierto', null);
   const created = db.prepare(`${TICKET_SELECT} WHERE t.id = ?`).get(info.lastInsertRowid);
   mailer.notify(req.user.email, 'Recibimos tu solicitud', created,
     `Hola ${req.user.name}, registramos tu ticket. Te avisaremos cuando haya novedades.`);
@@ -214,8 +224,9 @@ app.post('/api/tickets', auth, wrap((req, res) => {
 }));
 
 app.get('/api/tickets/:id', auth, wrap((req, res) => {
-  const t = withSla(db.prepare(`${TICKET_SELECT} WHERE t.id = ?`).get(Number(req.params.id)) || {});
-  if (!t.id || !canSee(req.user, t)) return res.status(404).json({ error: 'Ticket no encontrado' });
+  const row = db.prepare(`${TICKET_SELECT} WHERE t.id = ?`).get(Number(req.params.id));
+  if (!row || !canSee(req.user, row)) return res.status(404).json({ error: 'Ticket no encontrado' });
+  const t = withSla(row);
   t.attachments = db.prepare(`SELECT a.id, a.original_name, a.size, a.created_at, a.user_id, u.name AS author
     FROM attachments a JOIN users u ON u.id = a.user_id WHERE a.ticket_id = ? ORDER BY a.id`).all(t.id);
   t.comments = db.prepare(`SELECT c.id, c.body, c.created_at, u.name AS author, u.role
@@ -245,6 +256,7 @@ app.patch('/api/tickets/:id', auth, staff, wrap((req, res) => {
       resolved_at = CASE WHEN ? THEN COALESCE(resolved_at, datetime('now')) ELSE NULL END
       WHERE id=?`)
     .run(status, priority, assignee, firstResp ? 1 : 0, done(status) ? 1 : 0, t.id);
+  if (changed) logEvent.run(t.id, status, assignee);
   const updated = withSla(db.prepare(`${TICKET_SELECT} WHERE t.id = ?`).get(t.id));
   if (status !== t.status)
     mailer.notify(updated.requester_email, `Estado: ${status.replace('_', ' ')}`, updated,
@@ -387,7 +399,7 @@ app.get('/api/reports/export.csv', auth, staff, wrap((req, res) => {
   const r = rangeOf(req.query);
   const rows = db.prepare(`${TICKET_SELECT} ${r.sql} ORDER BY t.id`).all(...r.args).map((t) => withSla(t));
   const head = ['id', 'titulo', 'categoria', 'prioridad', 'estado', 'solicitante', 'departamento', 'asignado', 'creado_utc',
-    'primera_respuesta_utc', 'resuelto_utc', 'horas_hasta_respuesta', 'horas_hasta_resolucion', 'sla_respuesta_vencido', 'sla_resolucion_vencido'];
+    'primera_respuesta_utc', 'resuelto_utc', 'horas_habiles_hasta_respuesta', 'horas_habiles_hasta_resolucion', 'sla_respuesta_vencido', 'sla_resolucion_vencido'];
   const lines = [head.join(',')].concat(rows.map((t) => [t.id, t.title, t.category, t.priority, t.status, t.requester_name,
     t.department, t.assignee_name, t.created_at, t.first_response_at, t.resolved_at, round1(t.response_hours),
     round1(t.resolve_hours), t.sla_response_breached ? 'si' : 'no', t.sla_resolve_breached ? 'si' : 'no'].map(csvCell).join(',')));
@@ -413,7 +425,12 @@ app.patch('/api/admin/users/:id', auth, admin, wrap((req, res) => {
   }
   if (u.id === req.user.id && role !== 'admin')
     return res.status(400).json({ error: 'No puedes quitarte el rol de administrador' });
-  db.prepare('UPDATE users SET role = ?, department_id = ? WHERE id = ?').run(role, dep, u.id);
+  let lunch = u.lunch_shift;
+  if (req.body.lunch_shift !== undefined) {
+    lunch = req.body.lunch_shift === '' || req.body.lunch_shift === null ? null : String(req.body.lunch_shift);
+    if (lunch && !sla.config.LUNCH_SHIFTS[lunch]) return res.status(400).json({ error: 'Turno de almuerzo inválido' });
+  }
+  db.prepare('UPDATE users SET role = ?, department_id = ?, lunch_shift = ? WHERE id = ?').run(role, dep, lunch, u.id);
   res.json(getUser(u.id));
 }));
 
@@ -434,6 +451,12 @@ app.use((err, req, res, next) => {
 });
 
 if (require.main === module)
-  app.listen(PORT, () => console.log(`E-Ticket TI en http://localhost:${PORT} (dominio permitido: @${ALLOWED_DOMAIN})`));
+  app.listen(PORT, () => {
+    console.log(`E-Ticket TI en http://localhost:${PORT} (dominio permitido: @${ALLOWED_DOMAIN})`);
+    const hm = (a) => a.map((n) => String(n).padStart(2, '0')).join(':');
+    console.log(`SLA: ${hm(sla.config.START)}–${hm(sla.config.END)} zona ${sla.config.TZ}`);
+    if (!process.env.SLA_TZ && sla.config.TZ === 'UTC')
+      console.warn('AVISO: SLA_TZ no está definido y el servidor usa UTC; define SLA_TZ (p. ej. America/Bogota) para que el horario laboral sea el correcto.');
+  });
 
 module.exports = app;

@@ -145,3 +145,12 @@ test('utilidades: categoría, asunto y texto citado', () => {
   assert.equal(ingest.cleanSubject('RE: Fwd: [Ticket #12] No imprime'), 'No imprime');
   assert.equal(ingest.stripQuoted('Hola\nGracias\n\n> cita\nmás'), 'Hola\nGracias');
 });
+
+test('NOTIFY_NEW_TO agrega destinatarios a los avisos de ticket nuevo', () => {
+  process.env.NOTIFY_NEW_TO = 'Jefe.TI@empresa.com, no-valido';
+  try {
+    const list = require('../src/tickets').staffEmails(0);
+    assert.ok(list.includes('jefe.ti@empresa.com'));
+    assert.ok(!list.includes('no-valido'));
+  } finally { delete process.env.NOTIFY_NEW_TO; }
+});

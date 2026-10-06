@@ -25,6 +25,11 @@ Abre http://localhost:3000.
 ## Funcionamiento
 - Solo se pueden registrar correos del dominio `ALLOWED_DOMAIN`; cada usuario elige su departamento.
 - El correo `ADMIN_EMAIL` queda como **admin** al registrarse.
+- **Reabrir y confirmar**: al resolverse un ticket, el solicitante puede confirmar que quedó bien (pasa a «cerrado») o reabrirlo explicando qué sigue fallando (hasta `REOPEN_DAYS` días; TI siempre puede).
+- **Notas internas**: TI puede dejar notas que ve el equipo y gerencia, pero nunca el solicitante.
+- **Historial** de cada ticket: quién cambió estado, responsable, prioridad o categoría, y cuándo.
+- **Desactivar usuarios** (Administración → Usuarios → «Activo»): no entran, no reciben tickets ni avisos y se conserva su historial.
+- **Avisos de SLA** por correo: al 80 % del tiempo («por vencer») y cuando se vence, una vez por ticket, al responsable (o a todo TI si nadie lo tomó), al encargado y a `NOTIFY_NEW_TO`.
 - Roles (`Administración → Usuarios`):
   | Rol | Qué puede hacer |
   |---|---|

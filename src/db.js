@@ -84,6 +84,12 @@ if (!/'coordinator'/.test(db.prepare("SELECT sql FROM sqlite_master WHERE type='
   db.pragma('foreign_keys = ON');
 }
 
+// Cuentas desactivables (personas que ya no trabajan en la empresa) y notas internas de TI en los comentarios
+if (!db.prepare('PRAGMA table_info(users)').all().some((c) => c.name === 'active'))
+  db.exec('ALTER TABLE users ADD COLUMN active INTEGER NOT NULL DEFAULT 1');
+if (!db.prepare('PRAGMA table_info(comments)').all().some((c) => c.name === 'internal'))
+  db.exec('ALTER TABLE comments ADD COLUMN internal INTEGER NOT NULL DEFAULT 0');
+
 // Solución escrita por TI al resolver, y origen del ticket (web o correo)
 const ticketCols = db.prepare('PRAGMA table_info(tickets)').all().map((c) => c.name);
 if (!ticketCols.includes('resolution')) db.exec('ALTER TABLE tickets ADD COLUMN resolution TEXT');
@@ -98,6 +104,19 @@ db.exec(`CREATE TABLE IF NOT EXISTS ticket_events (
   assignee_id INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_events_ticket ON ticket_events(ticket_id);`);
+// Historial visible: quién hizo el cambio y qué otro cambio se hizo (prioridad, categoría, reapertura…)
+{
+  const cols = db.prepare('PRAGMA table_info(ticket_events)').all().map((c) => c.name);
+  if (!cols.includes('actor_id')) db.exec('ALTER TABLE ticket_events ADD COLUMN actor_id INTEGER');
+  if (!cols.includes('note')) db.exec('ALTER TABLE ticket_events ADD COLUMN note TEXT');
+}
+// Avisos de SLA ya enviados (uno por ticket y tipo)
+db.exec(`CREATE TABLE IF NOT EXISTS sla_alerts (
+  ticket_id INTEGER NOT NULL,
+  kind TEXT NOT NULL,
+  at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (ticket_id, kind)
+)`);
 db.exec(`INSERT INTO ticket_events (ticket_id, at, status, assignee_id)
   SELECT id, created_at, status, assignee_id FROM tickets
   WHERE id NOT IN (SELECT ticket_id FROM ticket_events)`);

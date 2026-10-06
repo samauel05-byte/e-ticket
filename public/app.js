@@ -201,7 +201,8 @@ async function detailView(id) {
     <div class="sla">${slaBox('Primera respuesta', t.first_response_at, t.response_hours, t.sla_response_target_h, t.sla_response_due, t.sla_response_breached, t.sla_paused)}
     ${slaBox('Resolución', t.resolved_at, t.resolve_hours, t.sla_resolve_target_h, t.sla_resolve_due, t.sla_resolve_breached, t.sla_paused)}</div>
     <div class="desc">${esc(t.description)}</div>
-    ${t.resolution ? `<div class="solution"><b>Solución</b><div>${esc(t.resolution)}</div></div>` : ''}</div>
+    ${t.resolution ? `<div class="solution"><b>Solución</b><div>${esc(t.resolution)}</div></div>` : ''}
+    ${t.can_confirm || t.can_reopen ? `<div class="confirmbar">${t.can_confirm ? '<span>¿Quedó resuelto?</span><button id="confirm">✔ Sí, cerrar el ticket</button>' : ''}${t.can_reopen ? '<button id="reopen" class="ghost">↺ Reabrir ticket</button>' : ''}</div><div class="err" id="aerr" role="alert"></div>` : ''}</div>
     ${isStaff() ? `<div class="card"><h3>Gestionar</h3><form id="mgr" class="grid2">
       <div><label>Estado</label><select name="status">${options(meta.statuses, t.status)}</select></div>
       <div><label>Prioridad</label><select name="priority">${options(meta.priorities, t.priority)}</select></div>
@@ -216,10 +217,11 @@ async function detailView(id) {
         ${a.user_id === me.id || me.role === 'admin' ? `<button class="link" data-del="${a.id}">eliminar</button>` : ''}</div>`).join('') || '<p class="muted">Sin adjuntos.</p>'}
       ${isManager() ? '' : `<form id="up"><input type="file" name="files" multiple required><button class="btn ghost" style="color:var(--fg)">Subir archivos</button><div class="err" id="uerr"></div></form>`}</div>
     <div class="card"><h3>Conversación (${t.comments.length})</h3>
-      <div class="comments">${t.comments.map((c) => `<div class="comment ${c.role !== 'user' ? 'ti' : ''}">${avatar(c.author)}<div class="bubble">
-        <div class="head"><strong>${esc(c.author)}</strong>${c.role !== 'user' ? '<span class="tag">TI</span>' : ''} <span class="muted">${esc(c.created_at)} UTC</span></div>
+      <div class="comments">${t.comments.map((c) => `<div class="comment ${c.role !== 'user' ? 'ti' : ''} ${c.internal ? 'internal' : ''}">${avatar(c.author)}<div class="bubble">
+        <div class="head"><strong>${esc(c.author)}</strong>${c.role !== 'user' ? '<span class="tag">TI</span>' : ''}${c.internal ? '<span class="tag note">🔒 Nota interna</span>' : ''} <span class="muted">${esc(c.created_at)} UTC</span></div>
         <div class="body">${esc(c.body)}</div></div></div>`).join('') || '<p class="muted">Aún no hay mensajes.</p>'}</div>
-      ${isManager() ? '<p class="muted">Gerencia tiene acceso de solo lectura.</p>' : `<form id="cm"><textarea name="body" required placeholder="Escribe un comentario…"></textarea><button>Enviar comentario</button></form>`}</div>`;
+      ${isManager() ? '<p class="muted">Gerencia tiene acceso de solo lectura.</p>' : `<form id="cm"><textarea name="body" required placeholder="Escribe un comentario…"></textarea>${isStaff() ? '<label class="chk"><input type="checkbox" name="internal"> 🔒 Nota interna (solo la ve el equipo de TI, no el solicitante)</label>' : ''}<button>Enviar comentario</button></form>`}</div>
+    <details class="card"><summary>Historial del ticket (${t.history.length})</summary><ul class="history">${t.history.map((h) => `<li><span class="muted">${esc(h.at)} UTC</span> ${esc(h.text)}${h.actor ? ` <span class="muted">· ${esc(h.actor)}</span>` : ''}</li>`).join('')}</ul></details>`;
   if ($('#up')) $('#up').onsubmit = async (e) => {
     e.preventDefault();
     try { await upload(id, e.target.files.files); detailView(id); } catch (er) { $('#uerr').textContent = er.message; }
@@ -227,7 +229,13 @@ async function detailView(id) {
   document.querySelectorAll('[data-del]').forEach((b) => (b.onclick = async () => {
     if (confirm('¿Eliminar este adjunto?')) { await api('/attachments/' + b.dataset.del, { method: 'DELETE' }); detailView(id); }
   }));
-  if ($('#cm')) $('#cm').onsubmit = async (e) => { e.preventDefault(); await api(`/tickets/${id}/comments`, { method: 'POST', body: formData(e.target) }); detailView(id); };
+  if ($('#cm')) $('#cm').onsubmit = async (e) => { e.preventDefault(); const b = formData(e.target); b.internal = Boolean(e.target.internal?.checked); await api(`/tickets/${id}/comments`, { method: 'POST', body: b }); detailView(id); };
+  if ($('#confirm')) $('#confirm').onclick = async () => { try { await api(`/tickets/${id}/confirm`, { method: 'POST', body: {} }); detailView(id); } catch (er) { $('#aerr').textContent = er.message; } };
+  if ($('#reopen')) $('#reopen').onclick = async () => {
+    const reason = prompt('¿Por qué reabres el ticket? (cuéntale a TI qué sigue fallando)');
+    if (reason === null) return;
+    try { await api(`/tickets/${id}/reopen`, { method: 'POST', body: { reason } }); detailView(id); } catch (er) { $('#aerr').textContent = er.message; }
+  };
   if (isStaff()) wireCategory($('#mgr'));
   if (isStaff()) $('#mgr').onsubmit = async (e) => {
     e.preventDefault();
@@ -244,16 +252,17 @@ async function adminView() {
   if (tab === 'mail') return mailAdminView(tabs);
   const users = await api('/admin/users');
   app.innerHTML = `<div class="pagehead"><div><h2>Administración</h2><span class="muted">Usuarios, roles, departamentos y turnos de almuerzo</span></div></div>${tabs}
-    <div class="card"><h3>Usuarios</h3><div class="tscroll"><table class="cards"><tr><th>Nombre</th><th>Correo</th><th>Departamento</th><th>Rol</th><th>Almuerzo (TI)</th></tr>
-    ${users.map((u) => `<tr class="row static" data-id="${u.id}"><td class="ttl" data-label="Nombre"><input class="inline" data-f="name" value="${esc(u.name)}" maxlength="100" aria-label="Nombre"></td>
+    <div class="card"><h3>Usuarios</h3><div class="tscroll"><table class="cards"><tr><th>Nombre</th><th>Correo</th><th>Departamento</th><th>Rol</th><th>Almuerzo (TI)</th><th>Activo</th></tr>
+    ${users.map((u) => `<tr class="row static ${u.active ? '' : 'off'}" data-id="${u.id}"><td class="ttl" data-label="Nombre"><input class="inline" data-f="name" value="${esc(u.name)}" maxlength="100" aria-label="Nombre"></td>
     <td data-label="Correo"><input class="inline" data-f="email" type="email" value="${esc(u.email)}" maxlength="200" aria-label="Correo"></td>
     <td data-label="Departamento"><select data-f="department_id">${options(meta.departments, u.department_id)}</select></td>
     <td data-label="Rol"><select data-f="role">${options(Object.entries(ROLE_NAMES).map(([id, name]) => ({ id, name })), u.role)}</select></td>
-    <td data-label="Almuerzo">${!['agent', 'admin'].includes(u.role) ? '<span class="muted">—</span>' : `<select data-f="lunch_shift"><option value="">Sin turno</option>${Object.entries(meta.sla.LUNCH_SHIFTS).map(([k, v]) => `<option value="${esc(k)}" ${u.lunch_shift === k ? 'selected' : ''}>Turno ${esc(k)} (${esc(v[0])}–${esc(v[1])})</option>`).join('')}</select>`}</td></tr>`).join('')}</table></div>
-    <div class="saved" id="saved" role="status"></div><div class="err" id="err" role="alert"></div><p class="muted">Puedes cambiar aquí el nombre, el correo, el departamento y el rol de cada persona: se guarda al terminar de escribir.</p><p class="muted">Horario laboral SLA: ${esc(String(meta.sla.START[0]).padStart(2, '0'))}:${esc(String(meta.sla.START[1]).padStart(2, '0'))}–${esc(String(meta.sla.END[0]).padStart(2, '0'))}:${esc(String(meta.sla.END[1]).padStart(2, '0'))} (${esc(meta.sla.TZ)}). El almuerzo pausa el SLA de los tickets asignados a esa persona.</p><p class="muted">Usuario = pide tickets · Líder = además ve los tickets de su departamento · Técnico (TI) = atiende tickets; su dashboard solo muestra lo suyo; sin reportes ni administración · Encargado de TI = ve todo, asigna, dashboard del equipo y reportes; sin administración · Gerencia = ve todo, dashboard y reportes, solo lectura · Administrador = TI + administra. Los tickets solo se asignan a Técnicos y Administradores.</p></div>
+    <td data-label="Almuerzo">${!['agent', 'admin'].includes(u.role) ? '<span class="muted">—</span>' : `<select data-f="lunch_shift"><option value="">Sin turno</option>${Object.entries(meta.sla.LUNCH_SHIFTS).map(([k, v]) => `<option value="${esc(k)}" ${u.lunch_shift === k ? 'selected' : ''}>Turno ${esc(k)} (${esc(v[0])}–${esc(v[1])})</option>`).join('')}</select>`}</td>
+    <td data-label="Activo"><input type="checkbox" data-f="active" ${u.active ? 'checked' : ''} ${u.id === me.id ? 'disabled' : ''} title="Desmarca para desactivar la cuenta (no podrá entrar)" aria-label="Activo"></td></tr>`).join('')}</table></div>
+    <div class="saved" id="saved" role="status"></div><div class="err" id="err" role="alert"></div><p class="muted">Puedes cambiar aquí el nombre, el correo, el departamento y el rol de cada persona: se guarda al terminar de escribir.</p><p class="muted">Horario laboral SLA: ${esc(String(meta.sla.START[0]).padStart(2, '0'))}:${esc(String(meta.sla.START[1]).padStart(2, '0'))}–${esc(String(meta.sla.END[0]).padStart(2, '0'))}:${esc(String(meta.sla.END[1]).padStart(2, '0'))} (${esc(meta.sla.TZ)}). El almuerzo pausa el SLA de los tickets asignados a esa persona.</p><p class="muted">Usuario = pide tickets · Líder = además ve los tickets de su departamento · Técnico (TI) = atiende tickets; su dashboard solo muestra lo suyo; sin reportes ni administración · Encargado de TI = ve todo, asigna, dashboard del equipo y reportes; sin administración · Gerencia = ve todo, dashboard y reportes, solo lectura · Administrador = TI + administra. Los tickets solo se asignan a Técnicos y Administradores. Desmarca «Activo» para quien ya no trabaja en la empresa: no podrá entrar ni recibirá tickets, pero se conserva su historial.</p></div>
     <div class="card"><h3>Nuevo departamento</h3><form id="dep" class="filters"><input name="name" required placeholder="Nombre del departamento"><button>Agregar</button></form></div>`;
   document.querySelectorAll('tr.static select, tr.static input').forEach((s) => (s.onchange = async () => {
-    try { await api('/admin/users/' + s.closest('tr').dataset.id, { method: 'PATCH', body: { [s.dataset.f]: s.value } }); $('#err').textContent = ''; $('#saved').textContent = '✔ Guardado'; setTimeout(() => { const el = $('#saved'); if (el) el.textContent = ''; }, 2500); }
+    try { await api('/admin/users/' + s.closest('tr').dataset.id, { method: 'PATCH', body: { [s.dataset.f]: s.type === 'checkbox' ? s.checked : s.value } }); s.closest('tr').classList.toggle('off', s.type === 'checkbox' && !s.checked); $('#err').textContent = ''; $('#saved').textContent = '✔ Guardado'; setTimeout(() => { const el = $('#saved'); if (el) el.textContent = ''; }, 2500); }
     catch (er) { $('#err').textContent = er.message; $('#saved').textContent = ''; setTimeout(adminView, 2500); }
   }));
   $('#dep').onsubmit = async (e) => {

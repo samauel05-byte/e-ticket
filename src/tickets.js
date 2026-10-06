@@ -34,10 +34,11 @@ const logEvent = db.prepare('INSERT INTO ticket_events (ticket_id, status, assig
 // Correos de TI (técnicos y administradores) + los de NOTIFY_NEW_TO (p. ej. el jefe de Tecnología, separados por coma)
 const staffEmails = (exceptId) => {
   const extra = String(process.env.NOTIFY_NEW_TO || '').split(',').map((e) => e.trim().toLowerCase()).filter((e) => /^[^\s@]+@[^\s@]+$/.test(e));
-  const staff = db.prepare("SELECT email FROM users WHERE role IN ('agent','admin') AND id != ?").all(exceptId || 0).map((r) => r.email);
+  const staff = db.prepare("SELECT email FROM users WHERE role IN ('agent','coordinator','admin') AND id != ?").all(exceptId || 0).map((r) => r.email);
   return [...new Set([...staff, ...extra])];
 };
-const isStaff = (u) => u.role === 'agent' || u.role === 'admin';
+const STAFF_ROLES = ['agent', 'coordinator', 'admin']; // gestionan tickets: técnico, encargado y administrador
+const isStaff = (u) => STAFF_ROLES.includes(u.role);
 const getTicket = (id) => db.prepare(`${TICKET_SELECT} WHERE t.id = ?`).get(id);
 
 // Crea un ticket y avisa al solicitante y a TI. requester: fila de getUser().

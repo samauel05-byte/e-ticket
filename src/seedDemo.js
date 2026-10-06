@@ -29,6 +29,8 @@ function seed() {
     ['tec', 'tecnico@empresa.com', 'Carlos Técnico', 'Tecnología', 'agent', 'B'],
     ['samuel', 'samuel@empresa.com', 'Samuel Soporte', 'Tecnología', 'agent', 'A'],
     ['laura', 'laura@empresa.com', 'Laura Redes', 'Tecnología', 'agent', 'B'],
+    ['encargado', 'encargado@empresa.com', 'Elena Encargada', 'Tecnología', 'coordinator', null],
+    ['lider', 'lider@empresa.com', 'Lucía Líder (Finanzas)', 'Finanzas', 'leader', null],
     ['gerencia', 'gerencia@empresa.com', 'Gerencia Prueba', 'Administración', 'manager', null],
     ['ana', 'ana@empresa.com', 'Ana Ruiz', 'Finanzas', 'user', null],
     ['luis', 'luis@empresa.com', 'Luis Pérez', 'Ventas', 'user', null],
@@ -71,7 +73,7 @@ function seed() {
       db.prepare(`INSERT INTO comments (ticket_id, user_id, body, created_at) VALUES (?,?,?, ${ago(hAgo - hResp)})`)
         .run(id, asg ? U[asg] : U.admin, 'Hola, ya estoy revisando tu solicitud.');
   }
-  console.log(`Datos de ejemplo creados. Usuarios (clave: ${PASS}): admin@, tecnico@, samuel@, laura@, gerencia@, ana@, luis@, marta@ (@empresa.com)`);
+  console.log(`Datos de ejemplo creados. Usuarios (clave: ${PASS}): admin@, tecnico@, samuel@, laura@, encargado@, lider@, gerencia@, ana@, luis@, marta@ (@empresa.com)`);
   return true;
 }
 

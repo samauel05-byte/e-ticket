@@ -308,3 +308,16 @@ test('admin: editar nombre y correo de un usuario (validaciones y duplicados)', 
   const t = (await u.post('/api/tickets', { title: 't', description: 'd', category: 'Otro' })).data;
   assert.equal(t.requester_email, 'edgar.editado@empresa.com');
 });
+
+test('cada persona edita su nombre y departamento; "Otro" ya no se ofrece como categoría', async () => {
+  const u = await register(ctx.base, 'perfil@empresa.com', 'Perfil Uno', 1);
+  const r = await u.patch('/api/me', { name: 'Perfil Dos', department_id: 3 });
+  assert.equal(r.status, 200);
+  assert.equal(r.data.name, 'Perfil Dos');
+  assert.equal(r.data.department_id, 3);
+  assert.equal(r.data.email, 'perfil@empresa.com');
+  assert.equal((await u.patch('/api/me', { name: 'x' })).status, 400);
+  assert.equal((await u.patch('/api/me', { department_id: 9999 })).status, 400);
+  assert.equal((await u.patch('/api/me', { role: 'admin' })).data.role, 'user'); // no puede subirse el rol
+  assert.ok(!(await u.get('/api/meta')).data.categories.includes('Otro'));
+});

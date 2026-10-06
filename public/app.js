@@ -23,10 +23,11 @@ const ico = (n) => `<svg class="i" viewBox="0 0 24 24" aria-hidden="true">${ICON
 const initials = (n) => String(n || '?').trim().split(/\s+/).slice(0, 2).map((w) => w[0]).join('').toUpperCase();
 const avatar = (n) => `<span class="avatar" title="${esc(n)}">${esc(initials(n))}</span>`;
 const isBreached = (t) => !t.resolved_at && (t.sla_response_breached || t.sla_resolve_breached);
-const isStaff = () => me && (me.role === 'agent' || me.role === 'admin');        // TI: gestiona tickets
+const isStaff = () => me && ['agent', 'coordinator', 'admin'].includes(me.role);   // TI: gestiona tickets
 const canViewAll = () => me && (isStaff() || me.role === 'manager');               // TI y gerencia: ven todo
+const canReports = () => me && ['coordinator', 'manager', 'admin'].includes(me.role); // el técnico no ve reportes
 const isManager = () => me && me.role === 'manager';
-const ROLE_NAMES = { user: 'Usuario', agent: 'Técnico (TI)', admin: 'Administrador', manager: 'Gerencia' };
+const ROLE_NAMES = { user: 'Usuario', leader: 'Líder de departamento', agent: 'Técnico (TI)', coordinator: 'Encargado de TI', manager: 'Gerencia', admin: 'Administrador' };
 
 async function api(path, opts = {}) {
   const res = await fetch('/api' + path, {
@@ -96,8 +97,8 @@ async function listView() {
   const params = new URLSearchParams(location.hash.split('?')[1] || '');
   const onlySla = params.get('sla') === '1';
   const assigneeFilter = params.get('assignee_id');
-  app.innerHTML = `<div class="pagehead"><div><h2>${canViewAll() ? 'Todos los tickets' : `Hola, ${esc(me.name.split(' ')[0])} 👋`}</h2>
-      <span class="muted">${canViewAll() ? 'Solicitudes de todos los departamentos' : 'Aquí ves todas tus solicitudes a Tecnología y cómo se han resuelto'}</span></div>
+  app.innerHTML = `<div class="pagehead"><div><h2>${canViewAll() ? 'Todos los tickets' : me.role === 'leader' ? 'Tickets de mi departamento' : `Hola, ${esc(me.name.split(' ')[0])} 👋`}</h2>
+      <span class="muted">${canViewAll() ? 'Solicitudes de todos los departamentos' : me.role === 'leader' ? 'Tus solicitudes y las de tu departamento, y cómo se han resuelto' : 'Aquí ves todas tus solicitudes a Tecnología y cómo se han resuelto'}</span></div>
       <a class="btn" href="#/new" style="margin:0">+ Nuevo ticket</a></div>
     ${assigneeFilter ? `<div class="chipbar">Filtrado por responsable <a class="btn ghost" style="margin:0 0 0 8px;padding:3px 10px" href="#/tickets">✕ quitar</a></div>` : ''}
     <div id="tiles" class="tiles"></div>
@@ -248,8 +249,8 @@ async function adminView() {
     <td data-label="Correo"><input class="inline" data-f="email" type="email" value="${esc(u.email)}" maxlength="200" aria-label="Correo"></td>
     <td data-label="Departamento"><select data-f="department_id">${options(meta.departments, u.department_id)}</select></td>
     <td data-label="Rol"><select data-f="role">${options(Object.entries(ROLE_NAMES).map(([id, name]) => ({ id, name })), u.role)}</select></td>
-    <td data-label="Almuerzo">${u.role === 'user' || u.role === 'manager' ? '<span class="muted">—</span>' : `<select data-f="lunch_shift"><option value="">Sin turno</option>${Object.entries(meta.sla.LUNCH_SHIFTS).map(([k, v]) => `<option value="${esc(k)}" ${u.lunch_shift === k ? 'selected' : ''}>Turno ${esc(k)} (${esc(v[0])}–${esc(v[1])})</option>`).join('')}</select>`}</td></tr>`).join('')}</table></div>
-    <div class="saved" id="saved" role="status"></div><div class="err" id="err" role="alert"></div><p class="muted">Puedes cambiar aquí el nombre, el correo, el departamento y el rol de cada persona: se guarda al terminar de escribir.</p><p class="muted">Horario laboral SLA: ${esc(String(meta.sla.START[0]).padStart(2, '0'))}:${esc(String(meta.sla.START[1]).padStart(2, '0'))}–${esc(String(meta.sla.END[0]).padStart(2, '0'))}:${esc(String(meta.sla.END[1]).padStart(2, '0'))} (${esc(meta.sla.TZ)}). El almuerzo pausa el SLA de los tickets asignados a esa persona.</p><p class="muted">Usuario = pide tickets · Técnico (TI) = atiende tickets · Administrador = TI + administra · Gerencia = ve todo y el dashboard, solo lectura</p></div>
+    <td data-label="Almuerzo">${!['agent', 'admin'].includes(u.role) ? '<span class="muted">—</span>' : `<select data-f="lunch_shift"><option value="">Sin turno</option>${Object.entries(meta.sla.LUNCH_SHIFTS).map(([k, v]) => `<option value="${esc(k)}" ${u.lunch_shift === k ? 'selected' : ''}>Turno ${esc(k)} (${esc(v[0])}–${esc(v[1])})</option>`).join('')}</select>`}</td></tr>`).join('')}</table></div>
+    <div class="saved" id="saved" role="status"></div><div class="err" id="err" role="alert"></div><p class="muted">Puedes cambiar aquí el nombre, el correo, el departamento y el rol de cada persona: se guarda al terminar de escribir.</p><p class="muted">Horario laboral SLA: ${esc(String(meta.sla.START[0]).padStart(2, '0'))}:${esc(String(meta.sla.START[1]).padStart(2, '0'))}–${esc(String(meta.sla.END[0]).padStart(2, '0'))}:${esc(String(meta.sla.END[1]).padStart(2, '0'))} (${esc(meta.sla.TZ)}). El almuerzo pausa el SLA de los tickets asignados a esa persona.</p><p class="muted">Usuario = pide tickets · Líder = además ve los tickets de su departamento · Técnico (TI) = atiende tickets; su dashboard solo muestra lo suyo; sin reportes ni administración · Encargado de TI = ve todo, asigna, dashboard del equipo y reportes; sin administración · Gerencia = ve todo, dashboard y reportes, solo lectura · Administrador = TI + administra. Los tickets solo se asignan a Técnicos y Administradores.</p></div>
     <div class="card"><h3>Nuevo departamento</h3><form id="dep" class="filters"><input name="name" required placeholder="Nombre del departamento"><button>Agregar</button></form></div>`;
   document.querySelectorAll('tr.static select, tr.static input').forEach((s) => (s.onchange = async () => {
     try { await api('/admin/users/' + s.closest('tr').dataset.id, { method: 'PATCH', body: { [s.dataset.f]: s.value } }); $('#err').textContent = ''; $('#saved').textContent = '✔ Guardado'; setTimeout(() => { const el = $('#saved'); if (el) el.textContent = ''; }, 2500); }
@@ -259,6 +260,26 @@ async function adminView() {
     e.preventDefault();
     try { await api('/admin/departments', { method: 'POST', body: formData(e.target) }); meta = await api('/meta'); adminView(); }
     catch (er) { $('#err').textContent = er.message; }
+  };
+}
+
+// ---------- Mi perfil ----------
+function profileView() {
+  app.innerHTML = `<div class="pagehead"><div><h2>Mi perfil</h2><span class="muted">Cambia tu nombre y tu departamento</span></div></div>
+    <div class="card"><form id="pf"><div class="grid2">
+      <div><label>Nombre completo</label><input name="name" required minlength="2" maxlength="100" value="${esc(me.name)}"></div>
+      <div><label>Departamento</label><select name="department_id">${options(meta.departments, me.department_id)}</select></div>
+      <div><label>Correo</label><input value="${esc(me.email)}" disabled></div>
+      <div><label>Rol</label><input value="${esc(ROLE_NAMES[me.role] || me.role)}" disabled></div></div>
+      <button>Guardar</button> <span class="saved" id="saved" role="status"></span><div class="err" id="err" role="alert"></div>
+      <p class="muted">El correo y el rol los cambia un administrador.</p></form></div>`;
+  $('#pf').onsubmit = async (e) => {
+    e.preventDefault();
+    try {
+      me = await api('/me', { method: 'PATCH', body: formData(e.target) });
+      $('#who').innerHTML = `${esc(me.name)}<small>${esc(me.department)}</small>`; $('#avatar').textContent = initials(me.name);
+      $('#err').textContent = ''; $('#saved').textContent = '✔ Guardado';
+    } catch (er) { $('#err').textContent = er.message; $('#saved').textContent = ''; }
   };
 }
 
@@ -309,7 +330,7 @@ async function mailAdminView(tabs) {
 
 // ---------- Reportes ----------
 async function reportsView() {
-  if (!canViewAll()) return (location.hash = '#/tickets');
+  if (!canReports()) return (location.hash = '#/tickets');
   const params = new URLSearchParams(location.hash.split('?')[1] || '');
   const r = await api('/reports?' + params);
   const h = (x) => (x == null ? '—' : x + ' h');
@@ -368,16 +389,16 @@ async function dashboardView() {
   const first = esc(me.name.split(' ')[0]);
   app.innerHTML = `<section class="hero"><div class="seg" role="group" aria-label="Periodo">${[7, 30, 90, 365].map((n) => `<a href="#/dashboard?days=${n}" class="${n === days ? 'on' : ''}">${n === 365 ? '1 año' : n + ' días'}</a>`).join('')}</div>
       <h2>Hola, ${first} 👋</h2>
-      <p>Así va Tecnología desde ${esc(d.from || 'el inicio')}. Tiempos en horas hábiles.</p>
+      <p>${d.scope === 'own' ? 'Así van tus tickets' : 'Así va Tecnología'} desde ${esc(d.from || 'el inicio')}. Tiempos en horas hábiles.</p>
       <div class="hstats"><div><b>${s.total}</b><span>Tickets</span></div><div><b>${p(s.pct_resolved)}</b><span>Resueltos</span></div>
         <div><b>${s.open}</b><span>Abiertos</span></div><div class="${s.overdue_open ? 'warnb' : ''}"><b>${s.overdue_open}</b><span>Vencidos</span></div></div></section>
     <div class="kpis">
       ${[['Cumple SLA respuesta', p(s.response_sla_pct), tone(s.response_sla_pct)], ['Cumple SLA solución', p(s.resolve_sla_pct), tone(s.resolve_sla_pct)],
         ['Respuesta promedio', h(s.avg_response_h), ''], ['Solución promedio', h(s.avg_resolve_h), '']]
         .map(([k, v, c]) => `<div class="card kpi ${c}"><div class="muted">${k}</div><div class="num">${v}</div></div>`).join('')}</div>
-    <h3 style="margin:18px 0 10px">Equipo de Tecnología</h3>
+    <h3 style="margin:18px 0 10px">${d.scope === 'own' ? 'Mi desempeño' : 'Equipo de Tecnología'}</h3>
     <div class="team">${d.team.map((t) => person(t)).join('') || '<div class="card muted">Aún no hay personal de TI. Asigna el rol en Administración.</div>'}
-      ${d.unassigned.total ? person(d.unassigned, 'unassigned') : ''}</div>
+      ${d.unassigned && d.unassigned.total ? person(d.unassigned, 'unassigned') : ''}</div>
     <div class="charts" style="margin-top:16px">
       <div class="card"><h3>Tickets creados y resueltos · últimos 14 días</h3>
         <div class="trend" role="img" aria-label="Tickets creados y resueltos por día">${d.trend.map((x) => `<div class="tcol" title="${esc(x.day)}: ${x.created} creados, ${x.resolved} resueltos">
@@ -387,7 +408,7 @@ async function dashboardView() {
       <div class="card"><h3>Por departamento que pide</h3><div class="bars">${d.by_department.map((x) => `<div class="bar" title="${esc(x.name)}: ${x.total}">
         <span class="lbl">${label(x.name)}</span><span class="track"><span class="fill" style="width:${Math.max(3, (x.total / maxD) * 100)}%"></span></span><span class="val">${x.total}</span></div>`).join('') || '<p class="muted">Sin datos en este periodo.</p>'}</div></div>
     </div>
-    <p class="muted">Más detalle y exportación en <a href="#/reports">Reportes</a>. “% resuelto” = tickets resueltos o cerrados entre los tickets asignados a esa persona en el periodo.</p>`;
+    <p class="muted">${canReports() ? 'Más detalle y exportación en <a href="#/reports">Reportes</a>.' : ''} “% resuelto” = tickets resueltos o cerrados entre los tickets asignados a esa persona en el periodo.</p>`;
 }
 
 // ---------- Router ----------
@@ -402,6 +423,7 @@ async function route() {
   try {
     if (h.startsWith('/ticket/')) await detailView(h.split('/')[2]);
     else if (h === '/new') newView();
+    else if (h === '/profile') profileView();
     else if (h.startsWith('/admin')) await adminView();
     else if (h.startsWith('/reports')) await reportsView();
     else if (h.startsWith('/dashboard')) await dashboardView();
@@ -444,8 +466,8 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) { do
 function start() {
   $('#top').hidden = !me;
   watchSig = null; watchIds = null;
-  if (me) { $('#who').innerHTML = `${esc(me.name)}<small>${esc(me.department)}</small>`; $('#avatar').textContent = initials(me.name); $('#adminLink').hidden = me.role !== 'admin'; $('#repLink').hidden = !canViewAll(); $('#dashLink').hidden = !canViewAll();
-    $('#ticketsLink').textContent = canViewAll() ? 'Tickets' : 'Mis tickets'; }
+  if (me) { $('#who').innerHTML = `${esc(me.name)}<small>${esc(me.department)}</small>`; $('#avatar').textContent = initials(me.name); $('#adminLink').hidden = me.role !== 'admin'; $('#repLink').hidden = !canReports(); $('#dashLink').hidden = !canViewAll();
+    $('#ticketsLink').textContent = canViewAll() ? 'Tickets' : me.role === 'leader' ? 'Mi departamento' : 'Mis tickets'; }
   route();
 }
 $('#logout').onclick = async () => { await api('/logout', { method: 'POST' }); me = null; meta = null; location.hash = '#/login'; start(); };

@@ -146,7 +146,7 @@ async function processRaw(raw) {
   const ref = /\[Ticket #(\d+)\]/i.exec(subject);
   if (ref) {
     const ticket = db.prepare('SELECT * FROM tickets WHERE id = ?').get(Number(ref[1]));
-    const allowed = ticket && user.role !== 'manager' && (ticket.requester_id === user.id || user.role === 'agent' || user.role === 'admin');
+    const allowed = ticket && user.role !== 'manager' && (ticket.requester_id === user.id || T.isStaff(user));
     if (allowed) {
       const body = clean(stripQuoted(text), 5000);
       if (!body) return ignore('respuesta sin contenido');

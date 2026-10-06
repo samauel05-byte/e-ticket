@@ -5,9 +5,8 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 // Instalación nativa: cargar .env (o ENV_FILE) cuando se ejecuta directamente. No pisa variables ya definidas.
-if (require.main === module) {
-  try { process.loadEnvFile(process.env.ENV_FILE || path.join(__dirname, '..', '.env')); } catch { /* sin .env: se usan las variables del entorno */ }
-}
+let ENV_STATUS = null;
+if (require.main === module) ENV_STATUS = require('./loadEnv').loadEnv();
 const multer = require('multer');
 const helmet = require('helmet');
 const SqliteStore = require('./sessionStore');
@@ -559,6 +558,7 @@ app.use((err, req, res, next) => {
 
 if (require.main === module)
   app.listen(PORT, () => {
+    if (ENV_STATUS) (ENV_STATUS.loaded ? console.log : console.warn)(require('./loadEnv').describe(ENV_STATUS));
     console.log(`ETIQUE en http://localhost:${PORT} (dominio permitido: @${ALLOWED_DOMAIN})`);
     mailIngest.start();
     const hm = (a) => a.map((n) => String(n).padStart(2, '0')).join(':');

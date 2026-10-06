@@ -38,7 +38,7 @@ new D('/app/data/eticket.db',{readonly:true}).backup('/app/data/backups/eticket-
   prune(path.join(ROOT, 'data', 'backups'), 'eticket-');
   console.log('Los adjuntos están en data/uploads. Copia data/backups y data/uploads a otro equipo.');
 } else {
-  try { process.loadEnvFile(path.join(ROOT, '.env')); } catch { /* sin .env */ }
+  require('../src/loadEnv').loadEnv(path.join(ROOT, '.env'));
   const Database = require('better-sqlite3');
   const dbPath = process.env.DB_PATH || path.join(ROOT, 'data', 'eticket.db');
   const upDir = process.env.UPLOAD_DIR || path.join(ROOT, 'data', 'uploads');

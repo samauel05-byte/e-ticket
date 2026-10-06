@@ -1,0 +1,35 @@
+# Ambiente de PRUEBA: todo en un solo comando, sin IMAP/SMTP reales ni HTTPS.
+#   ./scripts/test-env.sh up      ->  http://localhost:3000   (correos de aviso en http://localhost:8025)
+# NO usar en producción: crea usuarios con clave conocida.
+services:
+  eticket:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      SESSION_SECRET: solo-para-pruebas-no-usar-en-produccion
+      ALLOWED_DOMAIN: empresa.com
+      ADMIN_EMAIL: admin@empresa.com
+      COOKIE_SECURE: "false"          # sin HTTPS en pruebas
+      APP_URL: http://localhost:3000
+      SLA_TZ: ${SLA_TZ:-America/Bogota}
+      DEMO_SEED: "true"               # permite sembrar datos de ejemplo
+      SMTP_HOST: mailpit              # los avisos van a la bandeja de prueba
+      SMTP_PORT: "1025"
+      SMTP_FROM: E-Ticket TI <ti@empresa.com>
+      # Para probar con tu correo real, agrega IMAP_HOST / IMAP_PORT aquí (ver .env.example)
+    volumes:
+      - test-data:/app/data
+    depends_on:
+      - mailpit
+
+  mailpit:
+    image: axllent/mailpit
+    restart: unless-stopped
+    ports:
+      - "8025:8025"                   # bandeja de correos de prueba
+
+volumes:
+  test-data:

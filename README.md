@@ -13,7 +13,7 @@ Abre http://localhost:3000.
 ## Funcionamiento
 - Solo se pueden registrar correos del dominio `ALLOWED_DOMAIN`; cada usuario elige su departamento.
 - El correo `ADMIN_EMAIL` queda como **admin** al registrarse.
-- Roles: `user` (crea y ve sus tickets), `agent` (personal de TI: ve todos, cambia estado/prioridad, asigna), `admin` (además gestiona usuarios, roles y departamentos).
+- Roles: `user` (crea y ve sus tickets y su solución), `agent` (personal de TI: ve todos, cambia estado/prioridad/categoría, asigna, escribe la solución), `admin` (además gestiona usuarios, roles y departamentos) y `manager` (gerencia: ve todos los tickets, reportes y dashboard; solo lectura).
 - Los departamentos iniciales están en `src/db.js`; el admin puede agregar más desde la UI.
 - Producción: define `SESSION_SECRET`, usa HTTPS con `COOKIE_SECURE=true`.
 
@@ -45,10 +45,22 @@ Personal de TI (agent/admin) tiene la pestaña **Reportes**: totales, abiertos, 
 - Los tickets anteriores a esta función se calculan como si siempre hubieran estado en su estado actual.
 
 
+## Qué hace
+- Los usuarios piden ayuda desde la web (**Nuevo ticket**) o **enviando un correo** a la bandeja de soporte, y ven en **Mis tickets** cómo avanza cada solicitud y **cómo se resolvió**.
+- Tecnología atiende, asigna y escribe la solución; **gerencia** (solo lectura) y TI ven un **dashboard** con el avance de cada técnico (% resuelto, SLA, tiempos).
+- Todo se guarda en la base de datos del servidor (`data/`): los usuarios solo usan el navegador. Ver [INSTALL.md](INSTALL.md).
+
+## Instalación
+Windows, Linux y macOS, con Docker o directo con Node: ver [INSTALL.md](INSTALL.md).
+
+## Ambiente de prueba
+Con datos de ejemplo: `npm run demo` (solo Node, sin Docker) o `./scripts/test-env.sh up` (Docker, con bandeja de correos de prueba). Ver [TEST.md](TEST.md).
+
 ## Pruebas y CI
 `npm test` ejecuta las pruebas automáticas (API, permisos, SLA, adjuntos, reportes, IMAP con servidor simulado, sesiones). GitHub Actions (`.github/workflows/ci.yml`) las corre en cada PR, además de construir la imagen Docker y comprobar que arranca (`/healthz`) y que se niega a iniciar sin `SESSION_SECRET`.
 
 ## Seguridad
 - Sesiones guardadas en SQLite (sobreviven a reinicios; expiran a las 8 h).
 - Cabeceras de seguridad (helmet, CSP) y rechazo de peticiones que modifican datos con `Origin` de otro sitio.
+- Límite de intentos de login por IP y por correo guardado en la base, tope de conexiones simultáneas a IMAP y restricción opcional de Administración/Reportes a la red interna (`INTERNAL_CIDRS`). Para publicarlo en internet ver `DEPLOY.md`, sección 7.
 - Con `NODE_ENV=production` (como en Docker) `SESSION_SECRET` es obligatorio.

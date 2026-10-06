@@ -1,5 +1,7 @@
 # Despliegue en servidor propio
 
+> Instalar en Windows, Linux o macOS (con Docker o directo con Node): ver [INSTALL.md](INSTALL.md). Esta guía cubre la operación con Docker y Caddy.
+
 Arquitectura: **Caddy** (HTTPS, puertos 80/443) → **e-ticket** (Node, solo accesible por Caddy).
 La base de datos (SQLite) y los adjuntos viven en la carpeta local **`./data`** del servidor.
 
@@ -11,8 +13,8 @@ La base de datos (SQLite) y los adjuntos viven en la carpeta local **`./data`** 
 ## 2. Instalar
 ```bash
 git clone https://github.com/samauel05-byte/e-ticket && cd e-ticket
-./scripts/setup.sh          # crea ./data (permisos), ./certs y .env
-nano .env                   # ver "Variables" abajo
+node scripts/setup.js --mode docker     # asistente: crea .env (con SESSION_SECRET), ./data y ./certs
+# (o a mano: cp .env.example .env y editarlo; ver "Variables" abajo)
 docker compose up -d --build
 ```
 Abre `https://<SITE_ADDRESS>`. Entra con `ADMIN_EMAIL`: queda como administrador.
@@ -42,11 +44,11 @@ La contraseña del correo viaja al servidor: HTTPS es obligatorio.
 ## 5. Respaldos
 Todo lo importante está en `./data` (`eticket.db` y `uploads/`).
 ```bash
-./scripts/backup-docker.sh        # copia consistente de la BD en ./data/backups (con la app en marcha)
+node scripts/backup.js --docker        # copia consistente de la BD en ./data/backups (con la app en marcha)
 ```
 Prográmalo a diario con cron y copia `./data/backups` y `./data/uploads` a otro equipo:
 ```
-0 2 * * * cd /ruta/e-ticket && ./scripts/backup-docker.sh >> backup.log 2>&1
+0 2 * * * cd /ruta/e-ticket && node scripts/backup.js --docker >> backup.log 2>&1
 ```
 **Restaurar:** `docker compose down`, copia el `.db` elegido a `data/eticket.db` (borra `eticket.db-wal` y `-shm` si existen), `docker compose up -d`.
 
@@ -55,6 +57,60 @@ Prográmalo a diario con cron y copia `./data/backups` y `./data/uploads` a otro
 - Logs: `docker compose logs -f eticket`
 - Estado: `docker compose ps` · salud de la app: `GET /healthz`
 - Reiniciar no cierra las sesiones (se guardan en la base). Es una sola instancia.
+
+## 6b. Tickets por correo (bandeja de soporte)
+Los usuarios pueden pedir ayuda **enviando un correo** a una dirección de soporte (por ejemplo `soporte@empresa.com`): cada correo nuevo se convierte en un ticket a nombre de quien lo envió, con el asunto como título, el texto como descripción y los adjuntos permitidos. Quien envía recibe la confirmación por correo y puede **responder a ese aviso** para agregar información al ticket; TI también puede responder desde su correo.
+
+**Configuración** (en `.env`, o con `node scripts/setup.js`; ver `.env.example`): `INBOX_HOST`, `INBOX_PORT`, `INBOX_USER` e `INBOX_PASS` de la cuenta de soporte, más `SMTP_*` con esa misma cuenta para que los avisos salgan desde esa dirección.
+> **La contraseña de la cuenta va solo en el archivo `.env` del servidor.** No la pegues en chats, correos ni en el repositorio (el `.env` ya está excluido de git). Si alguna vez se expone, cámbiala.
+
+**Cómo se comporta**
+- Revisa la bandeja cada `INBOX_POLL_SECONDS` (60 s) y solo toma correos **no leídos de los últimos 2 días** (`INBOX_MAX_AGE_DAYS`), para no crear tickets con correo antiguo; luego los marca como leídos. Conviene usar una cuenta **exclusiva** de soporte.
+- Solo atiende remitentes del dominio de la empresa (`ALLOWED_DOMAIN`). Si el remitente aún no tiene cuenta y el login es por IMAP, se crea sola (departamento "Sin departamento", que el administrador puede cambiar).
+- Ignora respuestas automáticas, rebotes, correos masivos y los que falla SPF/DKIM/DMARC. Con `INBOX_REQUIRE_AUTH=true` exige además que el servidor de correo los marque como verificados (**recomendado** si la bandeja recibe correo de internet, porque el remitente de un correo se puede falsificar).
+- Límite de `INBOX_MAX_PER_SENDER_HOUR` (20) tickets por remitente y hora.
+- La categoría se adivina por palabras clave del asunto y el texto (por ejemplo "VPN" → Red / Internet); TI puede cambiarla en el ticket.
+- No se lee el contenido HTML con scripts: solo el texto del correo. Los adjuntos siguen las mismas reglas que en la web (tipos permitidos, tamaño máximo).
+
+**Comprobar que el correo está bien configurado** (en el servidor, con el `.env` ya lleno): `npm run check:mail`. Prueba la bandeja (IMAP) y el envío (SMTP) y, si algo falla, dice qué es: usuario/contraseña, certificado, host o puerto. No modifica la bandeja ni muestra contraseñas. Con `npm run check:mail -- --send-to tu.correo@empresa.com` además envía un correo de prueba.
+
+**Probarlo sin cuenta real:** `npm run demo` incluye una bandeja simulada; en otra ventana ejecuta `npm run demo:mail -- --from ana@empresa.com --subject "No tengo internet" --body "Desde las 9 no conecta"`.
+
+## 7. Publicar en internet (usuarios fuera de la oficina)
+Con el login por IMAP la clave real del correo viaja a esta página, así que **solo se publica con HTTPS válido** y con las defensas de abajo.
+
+**Qué necesitas**
+1. **Un nombre público**, p. ej. `tickets.tuempresa.com` (registro DNS tipo A hacia la IP pública de la oficina o del servidor).
+2. **IP pública fija** (o DNS dinámico) y, en el router/firewall, reenviar los puertos **80 y 443** al servidor. El puerto 80 lo necesita Let's Encrypt para validar y para redirigir a HTTPS.
+3. En `.env`:
+   ```
+   SITE_ADDRESS=tickets.tuempresa.com
+   CADDY_TLS=correo-del-admin@tuempresa.com    # Let's Encrypt: Caddy obtiene y renueva el certificado solo
+   APP_URL=https://tickets.tuempresa.com
+   COOKIE_SECURE=true
+   TRUST_PROXY=true
+   ```
+   Luego `docker compose up -d`. Con un certificado válido los usuarios **no** necesitan instalar nada.
+4. **DNS interno (recomendado):** que dentro de la oficina `tickets.tuempresa.com` resuelva a la IP *local* del servidor; muchos routers no soportan acceder a su propia IP pública.
+5. **No expongas nada más:** abre solo 80 y 443. Los puertos del servidor IMAP/SMTP **no** deben ser públicos (la app los usa desde dentro).
+
+**Defensas incluidas (ajustables en `.env`)**
+| Defensa | Variable (por defecto) |
+|---|---|
+| Bloqueo por IP tras fallos de login, guardado en la base (sobrevive a reinicios) | `LOGIN_MAX_PER_IP=20` en `LOGIN_WINDOW_MIN=15` |
+| Bloqueo por correo tras fallos | `LOGIN_MAX_PER_EMAIL=8` |
+| Retraso de ~0,4 s en cada fallo (frena la fuerza bruta) | `LOGIN_FAIL_DELAY_MS=400` |
+| Tope de comprobaciones simultáneas contra el servidor IMAP (lo protege de saturación) | `IMAP_MAX_CONCURRENT=5` |
+| Administración y Reportes solo desde la red interna | `INTERNAL_CIDRS=192.168.0.0/16,10.0.0.0/8` (vacío = sin restricción) |
+| Sin sesión, la API solo muestra lo mínimo para el login | siempre |
+| HTTPS obligatorio, cookie `Secure`, HSTS y cabeceras de seguridad | `COOKIE_SECURE=true` |
+
+Notas:
+- El bloqueo por correo permite que alguien bloquee a propósito a un compañero durante la ventana (15 min). Es el costo de frenar la fuerza bruta; si ocurre, sube `LOGIN_MAX_PER_EMAIL` o baja `LOGIN_WINDOW_MIN`.
+- Los fallos se registran en los logs (`docker compose logs eticket | grep "login fallido"`). Úsalos para detectar ataques.
+- Caddy reemplaza la cabecera `X-Forwarded-For` con la IP real del cliente; no pongas otro proxy delante sin ajustar `TRUST_PROXY`.
+- **Riesgos que no cubre el sistema:** suplantación (alguien monta una página falsa y pide la clave del correo) y contraseñas filtradas de otros sitios. Avisa a los usuarios la dirección oficial y, si es posible, activa verificación en dos pasos en el correo. La alternativa más segura sería un código por correo en vez de la clave (no implementado).
+- Mantén el servidor actualizado (`apt upgrade`, y `git pull && docker compose up -d --build` para el sistema) y revisa los respaldos.
 
 ## Sin Docker
 `npm ci --omit=dev && npm start` (Node 22+, gestor como systemd o pm2) con un proxy HTTPS propio delante.

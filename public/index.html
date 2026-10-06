@@ -4,20 +4,24 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>E-Ticket TI</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<meta name="theme-color" content="#eb1c26">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <header id="top" hidden>
-  <img class="logo-top" src="logo.png" alt="Grupo Dupla">
-  <strong>E-Ticket TI</strong>
-  <nav>
-    <a href="#/tickets">Tickets</a>
-    <a href="#/new">Nuevo ticket</a>
-    <a href="#/reports" id="repLink" hidden>Reportes</a>
-    <a href="#/admin" id="adminLink" hidden>Administración</a>
+  <a class="brand" href="#/tickets">
+    <span class="logochip"><img class="logo-top" src="logo-light.png" alt="Grupo Dupla"></span>
+    <strong>E-Ticket <span>TI</span></strong>
+  </a>
+  <nav id="nav">
+    <a href="#/dashboard" data-r="dashboard" id="dashLink" hidden>Dashboard</a>
+    <a href="#/tickets" data-r="tickets" id="ticketsLink">Tickets</a>
+    <a href="#/new" data-r="new">Nuevo ticket</a>
+    <a href="#/reports" data-r="reports" id="repLink" hidden>Reportes</a>
+    <a href="#/admin" data-r="admin" id="adminLink" hidden>Administración</a>
   </nav>
-  <span id="who"></span>
-  <button id="logout" class="link">Salir</button>
+  <div class="userbox"><span class="avatar" id="avatar"></span><span class="who" id="who"></span><button id="logout" class="link">Salir</button></div>
 </header>
 <main id="app"></main>
 <script src="app.js"></script>

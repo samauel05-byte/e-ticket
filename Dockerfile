@@ -6,6 +6,7 @@ COPY package*.json .npmrc ./
 RUN npm ci --omit=dev
 COPY src ./src
 COPY public ./public
+COPY scripts ./scripts
 RUN mkdir -p /app/data && chown -R node:node /app
 USER node
 ENV DB_PATH=/app/data/eticket.db UPLOAD_DIR=/app/data/uploads PORT=3000

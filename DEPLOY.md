@@ -5,6 +5,20 @@
 Arquitectura: **Caddy** (HTTPS, puertos 80/443) → **e-ticket** (Node, solo accesible por Caddy).
 La base de datos (SQLite) y los adjuntos viven en la carpeta local **`./data`** del servidor.
 
+## 0. Instalación en un comando (servidor Linux)
+Para un servidor **Linux** (Ubuntu, Debian, Rocky/Alma/RHEL...) hay un instalador que hace todo: instala Docker si falta, descarga el sistema, lo configura, lo arranca con HTTPS, comprueba el correo y programa el respaldo diario.
+
+1. Entra al servidor por SSH. Si ya tienes tu archivo `.env` (con los datos del correo), cópialo a `/opt/e-ticket/.env` **antes** (`sudo mkdir -p /opt/e-ticket`), y el instalador lo respetará. Si no, te hace las preguntas.
+2. Ejecuta:
+   ```
+   curl -fsSL https://raw.githubusercontent.com/samauel05-byte/e-ticket/main/scripts/install-server.sh | sudo sh
+   ```
+   (o, desde una copia descargada, `sudo ./scripts/install-server.sh`).
+
+Al terminar muestra la dirección para abrirlo. Cada paso es repetible: si lo ejecutas otra vez actualiza y conserva tu `.env` y tus datos. Para Windows o macOS usa [INSTALL.md](INSTALL.md).
+
+Los respaldos diarios (2:00) quedan en `data/backups` (base de datos) y `data/uploads` (adjuntos): **copia esas dos carpetas a otro equipo**, porque un respaldo en el mismo servidor no protege si el servidor se daña.
+
 ## 1. Requisitos
 - Linux (p. ej. Ubuntu Server 24.04 LTS), Docker y Docker Compose.
 - Un nombre interno (p. ej. `tickets.empresa.local`) que el DNS apunte al servidor.
@@ -44,11 +58,11 @@ La contraseña del correo viaja al servidor: HTTPS es obligatorio.
 ## 5. Respaldos
 Todo lo importante está en `./data` (`eticket.db` y `uploads/`).
 ```bash
-node scripts/backup.js --docker        # copia consistente de la BD en ./data/backups (con la app en marcha)
+docker compose exec -T eticket node scripts/backup.js --dest /app/data/backups   # copia consistente de la BD en ./data/backups (con la app en marcha)
 ```
 Prográmalo a diario con cron y copia `./data/backups` y `./data/uploads` a otro equipo:
 ```
-0 2 * * * cd /ruta/e-ticket && node scripts/backup.js --docker >> backup.log 2>&1
+0 2 * * * cd /ruta/e-ticket && docker compose exec -T eticket node scripts/backup.js --dest /app/data/backups >> backup.log 2>&1
 ```
 **Restaurar:** `docker compose down`, copia el `.db` elegido a `data/eticket.db` (borra `eticket.db-wal` y `-shm` si existen), `docker compose up -d`.
 

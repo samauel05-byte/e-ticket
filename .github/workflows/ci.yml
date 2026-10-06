@@ -139,3 +139,30 @@ jobs:
         run: |
           node scripts/backup.js --dest backups
           ls backups
+
+  installer:
+    # El instalador de un comando para servidores Linux, de punta a punta
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Sintaxis y shellcheck
+        run: |
+          sh -n scripts/install-server.sh
+          shellcheck scripts/install-server.sh
+      - name: Instalar sin preguntas
+        run: sudo SETUP_ARGS="--yes --domain empresa.com --admin admin@empresa.com --site localhost --tls internal --tz UTC" ./scripts/install-server.sh
+      - name: El sistema responde por HTTPS y quedó configurado
+        run: |
+          curl -fsSk https://localhost/healthz
+          sudo test -f /etc/cron.d/eticket-backup
+          sudo test "$(sudo stat -c %a .env)" = "600"
+      - name: Volver a ejecutarlo conserva la configuración
+        run: |
+          sudo cp .env /tmp/env.antes
+          sudo SETUP_ARGS="--yes" ./scripts/install-server.sh
+          sudo cmp .env /tmp/env.antes
+          curl -fsSk https://localhost/healthz
+      - name: El respaldo de las 2:00 funciona
+        run: |
+          sudo docker compose exec -T eticket node scripts/backup.js --dest /app/data/backups
+          sudo ls data/backups

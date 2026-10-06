@@ -72,6 +72,8 @@ Los usuarios pueden pedir ayuda **enviando un correo** a una dirección de sopor
 - La categoría se adivina por palabras clave del asunto y el texto (por ejemplo "VPN" → Red / Internet); TI puede cambiarla en el ticket.
 - No se lee el contenido HTML con scripts: solo el texto del correo. Los adjuntos siguen las mismas reglas que en la web (tipos permitidos, tamaño máximo).
 
+**Comprobar que el correo está bien configurado** (en el servidor, con el `.env` ya lleno): `npm run check:mail`. Prueba la bandeja (IMAP) y el envío (SMTP) y, si algo falla, dice qué es: usuario/contraseña, certificado, host o puerto. No modifica la bandeja ni muestra contraseñas. Con `npm run check:mail -- --send-to tu.correo@empresa.com` además envía un correo de prueba.
+
 **Probarlo sin cuenta real:** `npm run demo` incluye una bandeja simulada; en otra ventana ejecuta `npm run demo:mail -- --from ana@empresa.com --subject "No tengo internet" --body "Desde las 9 no conecta"`.
 
 ## 7. Publicar en internet (usuarios fuera de la oficina)

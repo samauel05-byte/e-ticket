@@ -9,7 +9,8 @@
     "setup": "node scripts/setup.js",
     "backup": "node scripts/backup.js",
     "demo": "node scripts/demo.js",
-    "demo:mail": "node scripts/demo-mail.js"
+    "demo:mail": "node scripts/demo-mail.js",
+    "check:mail": "node scripts/check-mail.js"
   },
   "repository": {
     "type": "git",

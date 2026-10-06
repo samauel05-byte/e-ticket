@@ -130,6 +130,7 @@ async function main() {
   console.log(mode === 'docker'
     ? '\nSiguiente paso:\n  docker compose up -d --build\nLuego abre ' + v.APP_URL
     : '\nSiguiente paso:\n  npm ci --omit=dev   (si aún no lo hiciste)\n  npm start\nLuego abre ' + v.APP_URL);
+  if (v.INBOX_HOST || v.SMTP_HOST) console.log('\nPara comprobar el correo antes de usarlo:\n  npm run check:mail');
 }
 
 main().catch((e) => { console.error('\nError: ' + e.message); process.exit(1); });

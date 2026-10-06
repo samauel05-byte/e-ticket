@@ -1,20 +1,22 @@
 const { ImapFlow } = require('imapflow');
 
-const HOST = process.env.IMAP_HOST || '';
-const PORT = Number(process.env.IMAP_PORT) || 993;
-const SECURE = process.env.IMAP_SECURE !== 'false'; // true = TLS directo (993)
-const REJECT_UNAUTHORIZED = process.env.IMAP_TLS_REJECT_UNAUTHORIZED !== 'false';
-const USER_FORMAT = process.env.IMAP_USER_FORMAT || 'email'; // 'email' o 'local' (parte antes de @)
-
-const enabled = () => Boolean(HOST);
+// La configuración se lee en cada uso: así los cambios hechos en Administración se aplican sin reiniciar.
+const cfg = () => ({
+  host: process.env.IMAP_HOST || '',
+  port: Number(process.env.IMAP_PORT) || 993,
+  secure: process.env.IMAP_SECURE !== 'false', // true = TLS directo (993)
+  rejectUnauthorized: process.env.IMAP_TLS_REJECT_UNAUTHORIZED !== 'false',
+  userFormat: process.env.IMAP_USER_FORMAT || 'email', // 'email' o 'local' (parte antes de @)
+  maxConcurrent: Number(process.env.IMAP_MAX_CONCURRENT) || 5,
+});
+const enabled = () => Boolean(cfg().host);
 
 // Máximo de comprobaciones simultáneas contra el servidor de correo (protege al servidor IMAP)
-const MAX_CONCURRENT = Number(process.env.IMAP_MAX_CONCURRENT) || 5;
 let inflight = 0;
 
 // Devuelve true si el servidor IMAP acepta las credenciales. No guarda la contraseña.
 async function verify(email, password) {
-  if (inflight >= MAX_CONCURRENT) {
+  if (inflight >= cfg().maxConcurrent) {
     const err = new Error('El servidor está ocupado, intenta de nuevo en un momento');
     err.unavailable = true;
     throw err;
@@ -24,12 +26,13 @@ async function verify(email, password) {
 }
 
 async function check(email, password) {
-  const user = USER_FORMAT === 'local' ? email.split('@')[0] : email;
+  const c = cfg();
+  const user = c.userFormat === 'local' ? email.split('@')[0] : email;
   const client = new ImapFlow({
-    host: HOST, port: PORT, secure: SECURE,
+    host: c.host, port: c.port, secure: c.secure,
     auth: { user, pass: password },
     logger: false,
-    tls: { rejectUnauthorized: REJECT_UNAUTHORIZED },
+    tls: { rejectUnauthorized: c.rejectUnauthorized },
     greetingTimeout: 10000, socketTimeout: 15000,
   });
   client.on('error', () => {});

@@ -35,7 +35,7 @@ function client(base) {
   };
   return {
     get: (u, h) => call('GET', u, null, h), post: (u, b, h) => call('POST', u, b, h),
-    patch: (u, b, h) => call('PATCH', u, b, h), del: (u, h) => call('DELETE', u, null, h),
+    patch: (u, b, h) => call('PATCH', u, b, h), put: (u, b, h) => call('PUT', u, b, h), del: (u, h) => call('DELETE', u, null, h),
     get cookie() { return cookie; },
   };
 }

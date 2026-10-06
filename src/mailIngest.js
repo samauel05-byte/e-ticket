@@ -211,13 +211,14 @@ async function pollOnce() {
 
 let timer = null;
 let running = false;
+let lastPoll = null; // { at, ok, error?, created? }
 function start() {
   if (!enabled() || timer) return false;
   const c = cfg();
   const tick = async () => {
     if (running) return;
     running = true;
-    try { await pollOnce(); } catch (e) { console.error('bandeja de soporte:', e.message); } finally { running = false; }
+    try { const r = await pollOnce(); lastPoll = { at: new Date().toISOString(), ok: true, summary: r }; } catch (e) { lastPoll = { at: new Date().toISOString(), ok: false, error: e.message }; console.error('bandeja de soporte:', e.message); } finally { running = false; }
   };
   console.log(`Tickets por correo activos: ${c.user} @ ${c.host} cada ${c.pollMs / 1000} s`);
   setTimeout(tick, 3000).unref();
@@ -225,5 +226,7 @@ function start() {
   return true;
 }
 const stop = () => { if (timer) clearInterval(timer); timer = null; };
+const restart = () => { stop(); return start(); }; // aplica cambios de configuración hechos en Administración
+const status = () => ({ enabled: enabled(), polling: Boolean(timer), last: lastPoll });
 
-module.exports = { enabled, start, stop, pollOnce, processRaw, guessCategory, stripQuoted, cleanSubject };
+module.exports = { enabled, start, stop, restart, status, pollOnce, processRaw, pollOnce, processRaw, guessCategory, stripQuoted, cleanSubject };

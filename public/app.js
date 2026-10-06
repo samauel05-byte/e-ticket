@@ -238,8 +238,11 @@ async function detailView(id) {
 // ---------- Admin ----------
 async function adminView() {
   if (me.role !== 'admin') return (location.hash = '#/tickets');
+  const tab = new URLSearchParams(location.hash.split('?')[1] || '').get('tab') === 'mail' ? 'mail' : 'users';
+  const tabs = `<div class="tabs"><a href="#/admin" class="${tab === 'users' ? 'on' : ''}">Usuarios</a><a href="#/admin?tab=mail" class="${tab === 'mail' ? 'on' : ''}">Correo</a></div>`;
+  if (tab === 'mail') return mailAdminView(tabs);
   const users = await api('/admin/users');
-  app.innerHTML = `<div class="pagehead"><div><h2>Administración</h2><span class="muted">Usuarios, roles, departamentos y turnos de almuerzo</span></div></div>
+  app.innerHTML = `<div class="pagehead"><div><h2>Administración</h2><span class="muted">Usuarios, roles, departamentos y turnos de almuerzo</span></div></div>${tabs}
     <div class="card"><h3>Usuarios</h3><div class="tscroll"><table class="cards"><tr><th>Nombre</th><th>Correo</th><th>Departamento</th><th>Rol</th><th>Almuerzo (TI)</th></tr>
     ${users.map((u) => `<tr class="row static" data-id="${u.id}"><td class="ttl" data-label="Nombre"><input class="inline" data-f="name" value="${esc(u.name)}" maxlength="100" aria-label="Nombre"></td>
     <td data-label="Correo"><input class="inline" data-f="email" type="email" value="${esc(u.email)}" maxlength="200" aria-label="Correo"></td>
@@ -256,6 +259,51 @@ async function adminView() {
     e.preventDefault();
     try { await api('/admin/departments', { method: 'POST', body: formData(e.target) }); meta = await api('/meta'); adminView(); }
     catch (er) { $('#err').textContent = er.message; }
+  };
+}
+
+// ---------- Administración: Correo ----------
+async function mailAdminView(tabs) {
+  const st = await api('/admin/mail');
+  const c = st.config;
+  const src = (k) => (c[k].source === 'database' ? '<span class="src db">guardado aquí</span>' : c[k].source === 'env' ? '<span class="src">del archivo .env</span>' : '');
+  const txt = (k, lab, ph = '', type = 'text') => `<div><label>${lab} ${src(k)}</label><input name="${k}" type="${type}" value="${esc(c[k].value ?? '')}" placeholder="${esc(ph)}" maxlength="200" autocomplete="off"></div>`;
+  const pw = (k, lab) => `<div><label>${lab} ${src(k)}</label><input name="${k}" type="password" placeholder="${c[k].set ? '•••••••• (dejar vacío para conservar)' : 'Contraseña'}" autocomplete="new-password"></div>`;
+  const ssl = (k, lab) => `<div><label>${lab}</label><select name="${k}"><option value="true" ${c[k].value !== 'false' ? 'selected' : ''}>Sí (SSL directo)</option><option value="false" ${c[k].value === 'false' ? 'selected' : ''}>No (STARTTLS / sin cifrar)</option></select></div>`;
+  const sslSmtp = `<div><label>SSL directo (puerto 465) ${src('SMTP_SECURE')}</label><select name="SMTP_SECURE"><option value="true" ${c.SMTP_SECURE.value === 'true' ? 'selected' : ''}>Sí</option><option value="false" ${c.SMTP_SECURE.value !== 'true' ? 'selected' : ''}>No (STARTTLS, puerto 587)</option></select></div>`;
+  const last = st.inbox.last;
+  const poll = !st.inbox.enabled ? '<span class="chip off">Desactivada</span>' : last && !last.ok ? `<span class="chip bad">Con error: ${esc(last.error)}</span>` : st.inbox.polling ? `<span class="chip ok">Activa${last ? ' · última revisión ' + esc(new Date(last.at).toLocaleTimeString()) : ''}</span>` : '<span class="chip off">Detenida</span>';
+  const sect = (id, title, desc, body, extra = '') => `<div class="card mailcard" id="s-${id}"><h3>${title}</h3><p class="muted">${desc}</p><div class="grid2">${body}</div>${extra}
+    <div class="testrow"><button type="button" class="ghost" data-test="${id}">Probar conexión</button><div class="result" id="r-${id}" role="status"></div></div></div>`;
+  app.innerHTML = `<div class="pagehead"><div><h2>Administración</h2><span class="muted">Configura el correo y comprueba que conecta</span></div></div>${tabs}
+    <form id="mailForm">
+    ${sect('login', 'Inicio de sesión con el correo', 'Los usuarios entran con su correo y contraseña de la empresa (se validan contra este servidor IMAP; la contraseña no se guarda).',
+      `${txt('IMAP_HOST', 'Servidor IMAP', 'mail.empresa.com')}${txt('IMAP_PORT', 'Puerto', '993')}${ssl('IMAP_SECURE', 'SSL')}
+       <div><label>Usuario de entrada ${src('IMAP_USER_FORMAT')}</label><select name="IMAP_USER_FORMAT"><option value="email" ${c.IMAP_USER_FORMAT.value !== 'local' ? 'selected' : ''}>Correo completo (usuario@dominio)</option><option value="local" ${c.IMAP_USER_FORMAT.value === 'local' ? 'selected' : ''}>Solo la parte antes de @</option></select></div>`,
+      `<div class="grid2"><div><label>Probar con el correo (no se guarda)</label><input id="t-email" type="email" autocomplete="off" placeholder="usuario@grupodupla.com"></div><div><label>Su contraseña (no se guarda)</label><input id="t-pass" type="password" autocomplete="new-password"></div></div>`)}
+    ${sect('inbox', 'Bandeja de soporte (crea tickets)', `Cada correo que llegue aquí se convierte en ticket. Estado: ${poll}`,
+      `${txt('INBOX_HOST', 'Servidor IMAP', 'mail.empresa.com')}${txt('INBOX_PORT', 'Puerto', '993')}${ssl('INBOX_SECURE', 'SSL')}${txt('INBOX_USER', 'Cuenta de soporte', 'soporte@empresa.com')}${pw('INBOX_PASS', 'Contraseña de la cuenta')}${txt('INBOX_POLL_SECONDS', 'Revisar cada (segundos)', '60')}`)}
+    ${sect('smtp', 'Avisos por correo (SMTP)', 'Con este servidor se envían las confirmaciones y respuestas a los usuarios.',
+      `${txt('SMTP_HOST', 'Servidor SMTP', 'mail.empresa.com')}${txt('SMTP_PORT', 'Puerto', '465')}${sslSmtp}${txt('SMTP_USER', 'Usuario', 'soporte@empresa.com')}${pw('SMTP_PASS', 'Contraseña')}${txt('SMTP_FROM', 'Remitente', 'ETIQUE <soporte@empresa.com>')}`,
+      `<div class="grid2"><div><label>Enviar además un correo de prueba a (opcional)</label><input id="t-to" type="email" autocomplete="off" placeholder="tu.correo@grupodupla.com"></div></div>`)}
+    <div class="actions"><button>Guardar configuración</button><span class="saved" id="saved" role="status"></span></div><div class="err" id="err" role="alert"></div>
+    <p class="muted">Lo que guardes aquí tiene prioridad sobre el archivo .env (las contraseñas se guardan cifradas). Para volver a lo del .env, borra el campo y guarda. "Probar conexión" usa lo que está escrito en pantalla aunque aún no lo hayas guardado.</p></form>`;
+  const values = () => Object.fromEntries([...new FormData($('#mailForm'))].map(([k, v]) => [k, v]));
+  const show = (id, r) => { const el = $('#r-' + id); el.className = 'result ' + (r.ok ? 'ok' : 'bad'); el.innerHTML = `<b>${r.ok ? '✔ Conexión exitosa' : '✘ No se pudo conectar'}</b><div>${esc(r.message)}</div>${(r.hints || []).map((h) => `<div class="hint">→ ${esc(h)}</div>`).join('')}`; };
+  document.querySelectorAll('[data-test]').forEach((b) => (b.onclick = async () => {
+    const id = b.dataset.test; const el = $('#r-' + id);
+    b.disabled = true; el.className = 'result'; el.textContent = 'Probando…';
+    try {
+      const body = { what: id, values: values() };
+      if (id === 'login') { body.email = $('#t-email').value; body.password = $('#t-pass').value; }
+      if (id === 'smtp') body.send_to = $('#t-to').value;
+      show(id, await api('/admin/mail/test', { method: 'POST', body }));
+    } catch (er) { el.className = 'result bad'; el.textContent = er.message; } finally { b.disabled = false; }
+  }));
+  $('#mailForm').onsubmit = async (e) => {
+    e.preventDefault();
+    try { await api('/admin/mail', { method: 'PUT', body: { values: values() } }); meta = await api('/meta'); $('#err').textContent = ''; $('#saved').textContent = '✔ Guardado'; setTimeout(mailAdminView, 900, tabs); }
+    catch (er) { $('#err').textContent = er.message; $('#saved').textContent = ''; }
   };
 }
 
@@ -354,7 +402,7 @@ async function route() {
   try {
     if (h.startsWith('/ticket/')) await detailView(h.split('/')[2]);
     else if (h === '/new') newView();
-    else if (h === '/admin') await adminView();
+    else if (h.startsWith('/admin')) await adminView();
     else if (h.startsWith('/reports')) await reportsView();
     else if (h.startsWith('/dashboard')) await dashboardView();
     else if (h === '/' || h === '') await (canViewAll() ? dashboardView() : listView());

@@ -17,6 +17,10 @@ const mailer = require('./mailer');
 const limiter = require('./rateLimit');
 const netAcl = require('./netAcl');
 const sla = require('./sla');
+const settings = require('./settings');
+const mailCheck = require('./mailCheck');
+const mailIngest = require('./mailIngest');
+settings.applyToEnv(); // lo guardado en Administración tiene prioridad sobre .env
 const { targets: SLA_TARGETS } = sla;
 
 const ALLOWED_DOMAIN = (process.env.ALLOWED_DOMAIN || 'empresa.com').toLowerCase().replace(/^@/, '');
@@ -75,7 +79,8 @@ app.use(session({
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
 const wrap = (fn) => (req, res) => {
-  try { fn(req, res); } catch (e) { console.error(e); res.status(500).json({ error: 'Error interno' }); }
+  const fail = (e) => { console.error(e); if (!res.headersSent) res.status(500).json({ error: 'Error interno' }); };
+  try { const r = fn(req, res); if (r && typeof r.catch === 'function') r.catch(fail); } catch (e) { fail(e); }
 };
 const str = (v, max) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
 
@@ -488,6 +493,30 @@ app.patch('/api/admin/users/:id', auth, admin, wrap((req, res) => {
   res.json(getUser(u.id));
 }));
 
+// ── Correo: configuración y pruebas de conexión (solo administradores) ──
+const mailState = () => ({ config: settings.publicConfig(), inbox: mailIngest.status(), smtp_enabled: mailer.enabled(), login_enabled: imap.enabled() });
+app.get('/api/admin/mail', auth, admin, wrap((req, res) => res.json(mailState())));
+app.put('/api/admin/mail', auth, admin, wrap((req, res) => {
+  try { settings.save(req.body.values || {}, req.user.id); }
+  catch (e) { return res.status(400).json({ error: e.message }); }
+  mailIngest.restart();
+  res.json(mailState());
+}));
+// Prueba lo que hay escrito en el formulario (sin guardarlo); contraseña vacía = la guardada
+app.post('/api/admin/mail/test', auth, admin, wrap(async (req, res) => {
+  let cfg;
+  try { cfg = settings.effective(req.body.values || {}); } catch (e) { return res.status(400).json({ error: e.message }); }
+  const what = req.body.what;
+  if (what === 'inbox') return res.json(await mailCheck.checkInbox(cfg));
+  if (what === 'smtp') {
+    const to = String(req.body.send_to || '').trim().toLowerCase();
+    if (to && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) return res.status(400).json({ error: 'Correo de destino no válido' });
+    return res.json(await mailCheck.checkSmtp(cfg, to || null));
+  }
+  if (what === 'login') return res.json(await mailCheck.checkLogin(cfg, String(req.body.email || '').trim(), String(req.body.password || '')));
+  res.status(400).json({ error: 'Prueba desconocida' });
+}));
+
 app.post('/api/admin/departments', auth, admin, wrap((req, res) => {
   const name = str(req.body.name, 80);
   if (!name) return res.status(400).json({ error: 'Nombre obligatorio' });
@@ -507,7 +536,7 @@ app.use((err, req, res, next) => {
 if (require.main === module)
   app.listen(PORT, () => {
     console.log(`ETIQUE en http://localhost:${PORT} (dominio permitido: @${ALLOWED_DOMAIN})`);
-    require('./mailIngest').start();
+    mailIngest.start();
     const hm = (a) => a.map((n) => String(n).padStart(2, '0')).join(':');
     console.log(`SLA: ${hm(sla.config.START)}–${hm(sla.config.END)} zona ${sla.config.TZ}`);
     if (!process.env.SLA_TZ && sla.config.TZ === 'UTC')

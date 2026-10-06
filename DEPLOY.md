@@ -88,6 +88,8 @@ Los usuarios pueden pedir ayuda **enviando un correo** a una dirección de sopor
 
 **Comprobar que el correo está bien configurado** (en el servidor, con el `.env` ya lleno): `npm run check:mail`. Prueba la bandeja (IMAP) y el envío (SMTP) y, si algo falla, dice qué es: usuario/contraseña, certificado, host o puerto. No modifica la bandeja ni muestra contraseñas. Con `npm run check:mail -- --send-to tu.correo@empresa.com` además envía un correo de prueba.
 
+**Desde la pantalla:** como administrador, entra en **Administración → Correo**. Ahí puedes escribir el servidor, puerto, usuario y contraseña del inicio de sesión, de la bandeja de soporte y de los avisos (SMTP), pulsar **Probar conexión** (te dice "✔ Conexión exitosa" o qué falla) y **Guardar**. Lo guardado tiene prioridad sobre el `.env`, las contraseñas se cifran en la base de datos y el cambio se aplica sin reiniciar.
+
 **Probarlo sin cuenta real:** `npm run demo` incluye una bandeja simulada; en otra ventana ejecuta `npm run demo:mail -- --from ana@empresa.com --subject "No tengo internet" --body "Desde las 9 no conecta"`.
 
 ## 7. Publicar en internet (usuarios fuera de la oficina)

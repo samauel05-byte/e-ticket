@@ -7,7 +7,7 @@ const path = require('path');
 const { ImapFlow } = require('imapflow');
 const nodemailer = require('nodemailer');
 
-try { process.loadEnvFile(process.env.ENV_FILE || path.join(__dirname, '..', '.env')); } catch { /* sin .env: se usa el entorno */ }
+const envStatus = require('../src/loadEnv').loadEnv();
 const env = (k, d = '') => (process.env[k] === undefined || process.env[k] === '' ? d : process.env[k]);
 const i = process.argv.indexOf('--send-to');
 const sendTo = i > 0 ? process.argv[i + 1] : null;
@@ -88,6 +88,7 @@ async function checkSmtp() {
 
 (async () => {
   console.log('ETIQUE · diagnóstico de correo');
+  console.log(require('../src/loadEnv').describe(envStatus));
   await checkInbox();
   await checkSmtp();
   console.log(failures ? `\n${failures} problema(s) por resolver.` : '\nTodo en orden.');

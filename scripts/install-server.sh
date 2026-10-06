@@ -1,5 +1,5 @@
 #!/bin/sh
-# Instalador de E-Ticket TI para un servidor LINUX (Ubuntu, Debian, RHEL/Rocky/Alma...).
+# Instalador de ETIQUE para un servidor LINUX (Ubuntu, Debian, RHEL/Rocky/Alma...).
 # Instala Docker si hace falta, descarga el sistema, crea la configuración, lo arranca con HTTPS y programa el respaldo diario.
 #
 #   Desde una copia ya descargada:   sudo ./scripts/install-server.sh
@@ -50,7 +50,7 @@ docker compose version >/dev/null 2>&1 || die "Falta el complemento 'docker comp
 
 # 2. El sistema
 if [ ! -f "$DIR/docker-compose.yml" ]; then
-  say "Descargando E-Ticket TI en $DIR"
+  say "Descargando ETIQUE en $DIR"
   command -v git >/dev/null 2>&1 || install_pkg git
   git clone --branch "$BRANCH" "$REPO" "$DIR"
 elif [ -z "$SCRIPT_DIR" ] && [ -d "$DIR/.git" ]; then

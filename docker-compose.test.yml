@@ -18,7 +18,7 @@ services:
       DEMO_SEED: "true"               # permite sembrar datos de ejemplo
       SMTP_HOST: mailpit              # los avisos van a la bandeja de prueba
       SMTP_PORT: "1025"
-      SMTP_FROM: E-Ticket TI <ti@empresa.com>
+      SMTP_FROM: ETIQUE <ti@empresa.com>
       # Para probar con tu correo real, agrega IMAP_HOST / IMAP_PORT aquí (ver .env.example)
     volumes:
       - test-data:/app/data

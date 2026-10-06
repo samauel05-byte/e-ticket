@@ -2,7 +2,7 @@ const nodemailer = require('nodemailer');
 
 const HOST = process.env.SMTP_HOST || '';
 const APP_URL = (process.env.APP_URL || `http://localhost:${process.env.PORT || 3000}`).replace(/\/$/, '');
-const FROM = process.env.SMTP_FROM || (process.env.SMTP_USER ? `E-Ticket TI <${process.env.SMTP_USER}>` : 'E-Ticket TI <no-reply@localhost>');
+const FROM = process.env.SMTP_FROM || (process.env.SMTP_USER ? `ETIQUE <${process.env.SMTP_USER}>` : 'ETIQUE <no-reply@localhost>');
 
 const enabled = () => Boolean(HOST);
 

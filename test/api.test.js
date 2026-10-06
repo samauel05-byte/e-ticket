@@ -266,3 +266,45 @@ test('lista: filtro por responsable (y sin asignar)', async () => {
   // un usuario común no puede usar el filtro para ver tickets ajenos
   assert.ok((await ana.get('/api/tickets?assignee_id=' + adminId)).data.every((t) => t.requester_id === 2));
 });
+
+test('categoría manual: "Otra" + texto; se normaliza, se valida y TI puede cambiarla', async () => {
+  const mk = (extra) => newTicket(ana, { category: '__otra__', ...extra });
+  const ok = await mk({ category_other: '  cámaras   de seguridad ' });
+  assert.equal(ok.status, 201);
+  assert.equal(ok.data.category, 'Cámaras de seguridad');
+  assert.equal((await mk({ category_other: 'hardware' })).data.category, 'Hardware'); // coincide con una de la lista
+  assert.equal((await mk({ category_other: 'x' })).status, 400); // muy corta
+  assert.equal((await mk({})).status, 400); // sin texto
+  assert.equal((await mk({ category_other: 'a'.repeat(200) })).data.category.length, 60); // se recorta
+  // una categoría inventada sin usar "Otra" sigue siendo inválida
+  assert.equal((await newTicket(ana, { category: 'Inventada' })).status, 400);
+  // TI la cambia a mano o a una de la lista; una manual inválida no cambia nada
+  const id = ok.data.id;
+  assert.equal((await admin.patch('/api/tickets/' + id, { category: '__otra__', category_other: 'Telefonía IP' })).data.category, 'Telefonía IP');
+  assert.equal((await admin.patch('/api/tickets/' + id, { category: '__otra__', category_other: '' })).status, 400);
+  assert.equal((await admin.patch('/api/tickets/' + id, { category: 'Software' })).data.category, 'Software');
+  // se sugieren las ya usadas
+  const meta = (await admin.get('/api/meta')).data;
+  assert.ok(meta.extra_categories.some((c) => c.startsWith('Aaaa')), 'las categorías escritas a mano ya usadas se sugieren');
+  // un texto con HTML se guarda como texto (la interfaz lo escapa)
+  assert.equal((await mk({ category_other: '<b>hola</b>' })).data.category, '<b>hola</b>');
+});
+
+test('admin: editar nombre y correo de un usuario (validaciones y duplicados)', async () => {
+  const u = await register(ctx.base, 'editable@empresa.com', 'Editable Uno', 2);
+  const id = (await u.get('/api/me')).data.id;
+  const ok = await admin.patch('/api/admin/users/' + id, { name: '  Edgar Editado ', email: 'Edgar.Editado@Empresa.com' });
+  assert.equal(ok.status, 200);
+  assert.equal(ok.data.name, 'Edgar Editado');
+  assert.equal(ok.data.email, 'edgar.editado@empresa.com');
+  assert.equal((await admin.patch('/api/admin/users/' + id, { email: 'alguien@gmail.com' })).status, 400); // dominio ajeno
+  assert.equal((await admin.patch('/api/admin/users/' + id, { email: 'ana@empresa.com' })).status, 409); // ya existe
+  assert.equal((await admin.patch('/api/admin/users/' + id, { name: 'x' })).status, 400);
+  const yo = (await admin.get('/api/me')).data;
+  assert.equal((await admin.patch('/api/admin/users/' + yo.id, { email: 'otro@empresa.com' })).status, 400); // no cambiarse el propio correo
+  assert.equal((await admin.patch('/api/admin/users/' + yo.id, { name: 'Administrador Principal' })).status, 200); // el nombre sí
+  assert.equal((await ana.patch('/api/admin/users/' + id, { name: 'Hack' })).status, 403);
+  // los tickets conservan su historia con el correo nuevo
+  const t = (await u.post('/api/tickets', { title: 't', description: 'd', category: 'Otro' })).data;
+  assert.equal(t.requester_email, 'edgar.editado@empresa.com');
+});

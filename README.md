@@ -1,4 +1,16 @@
-# E-Ticket TI
+# ETIQUE
+
+**ETIQUE** es el sistema de tickets de Tecnología de Grupo Dupla. Su nombre cuenta cómo funciona:
+
+| | |
+|---|---|
+| **E** | **E**scribes tu solicitud (por la web o por correo) |
+| **T** | **T**ecnología la recibe |
+| **I** | **I**nterviene un técnico |
+| **Q** | **Q**ueda resuelta, con su solución a la vista |
+| **U** | **U**suario informado en cada paso |
+| **E** | **E**valuamos y mejoramos (reportes y dashboard) |
+
 
 Sistema de tickets de solicitud para el área de Tecnología. Node + Express + SQLite.
 

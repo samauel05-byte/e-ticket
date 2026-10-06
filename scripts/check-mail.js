@@ -80,14 +80,14 @@ async function checkSmtp() {
     ok('Conexión y contraseña correctas.');
     if (sendTo) {
       const from = env('SMTP_FROM', env('SMTP_USER', 'no-reply@localhost'));
-      await t.sendMail({ from, to: sendTo, subject: 'Prueba de E-Ticket TI', text: 'Si lees esto, el envío de avisos funciona correctamente.' });
+      await t.sendMail({ from, to: sendTo, subject: 'Prueba de ETIQUE', text: 'Si lees esto, el envío de avisos funciona correctamente.' });
       ok(`Correo de prueba enviado a ${sendTo} desde ${from}. Revisa su bandeja (y el spam).`);
     }
   } catch (e) { explain(e, 'SMTP', 'SMTP_TLS_REJECT_UNAUTHORIZED'); }
 }
 
 (async () => {
-  console.log('E-Ticket TI · diagnóstico de correo');
+  console.log('ETIQUE · diagnóstico de correo');
   await checkInbox();
   await checkSmtp();
   console.log(failures ? `\n${failures} problema(s) por resolver.` : '\nTodo en orden.');

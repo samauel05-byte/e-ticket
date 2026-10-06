@@ -102,6 +102,14 @@ db.exec(`INSERT INTO ticket_events (ticket_id, at, status, assignee_id)
   SELECT id, created_at, status, assignee_id FROM tickets
   WHERE id NOT IN (SELECT ticket_id FROM ticket_events)`);
 
+// Configuración editable desde Administración (correo). Las contraseñas se guardan cifradas.
+db.exec(`CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_by INTEGER
+)`);
+
 // Correos ya procesados (evita duplicados al recibir tickets por correo)
 db.exec(`CREATE TABLE IF NOT EXISTS ingested_mail (
   message_id TEXT PRIMARY KEY,

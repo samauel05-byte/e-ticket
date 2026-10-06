@@ -410,8 +410,40 @@ async function route() {
   } catch (e) { app.innerHTML = `<div class="card err">${esc(e.message)}</div>`; }
 }
 
+// ---------- Actualización automática: revisa tickets nuevos o cambiados cada 30 s ----------
+const REFRESH_MS = 30000;
+let watchSig = null; let watchIds = null; let baseTitle = document.title;
+function toast(msg) {
+  let t = $('#toast'); if (!t) { t = document.createElement('div'); t.id = 'toast'; t.setAttribute('role', 'status'); document.body.appendChild(t); }
+  t.textContent = msg; t.classList.add('show'); setTimeout(() => t.classList.remove('show'), 6000);
+}
+async function watchTickets() {
+  if (!me || document.hidden) return;
+  try {
+    const list = await api('/tickets');
+    const sig = JSON.stringify(list.map((t) => [t.id, t.status, t.assignee_id, t.priority]));
+    const ids = new Set(list.map((t) => t.id));
+    if (watchIds && sig !== watchSig) {
+      const fresh = list.filter((t) => !watchIds.has(t.id) && t.requester_id !== me.id);
+      if (fresh.length && canViewAll()) {
+        toast(`🔔 ${fresh.length === 1 ? 'Nuevo ticket' : fresh.length + ' tickets nuevos'}: ${fresh[0].title}`);
+        document.title = `(${fresh.length}) ${baseTitle}`;
+      }
+      const h = location.hash.replace(/^#/, '');
+      const typing = document.activeElement && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName);
+      const y = window.scrollY;
+      if (!typing && (h.startsWith('/tickets') || h === '' || h === '/')) { await (canViewAll() && (h === '' || h === '/') ? dashboardView() : listView()); window.scrollTo(0, y); }
+      else if (!typing && h.startsWith('/dashboard')) { await dashboardView(); window.scrollTo(0, y); }
+    }
+    watchSig = sig; watchIds = ids;
+  } catch { /* sin conexión o sesión vencida: se reintenta */ }
+}
+setInterval(watchTickets, REFRESH_MS);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) { document.title = baseTitle; watchTickets(); } });
+
 function start() {
   $('#top').hidden = !me;
+  watchSig = null; watchIds = null;
   if (me) { $('#who').innerHTML = `${esc(me.name)}<small>${esc(me.department)}</small>`; $('#avatar').textContent = initials(me.name); $('#adminLink').hidden = me.role !== 'admin'; $('#repLink').hidden = !canViewAll(); $('#dashLink').hidden = !canViewAll();
     $('#ticketsLink').textContent = canViewAll() ? 'Tickets' : 'Mis tickets'; }
   route();

@@ -31,8 +31,12 @@ const TICKET_SELECT = `SELECT t.*, r.name AS requester_name, r.email AS requeste
   LEFT JOIN users a ON a.id = t.assignee_id`;
 
 const logEvent = db.prepare('INSERT INTO ticket_events (ticket_id, status, assignee_id) VALUES (?,?,?)');
-const staffEmails = (exceptId) =>
-  db.prepare("SELECT email FROM users WHERE role IN ('agent','admin') AND id != ?").all(exceptId || 0).map((r) => r.email);
+// Correos de TI (técnicos y administradores) + los de NOTIFY_NEW_TO (p. ej. el jefe de Tecnología, separados por coma)
+const staffEmails = (exceptId) => {
+  const extra = String(process.env.NOTIFY_NEW_TO || '').split(',').map((e) => e.trim().toLowerCase()).filter((e) => /^[^\s@]+@[^\s@]+$/.test(e));
+  const staff = db.prepare("SELECT email FROM users WHERE role IN ('agent','admin') AND id != ?").all(exceptId || 0).map((r) => r.email);
+  return [...new Set([...staff, ...extra])];
+};
 const isStaff = (u) => u.role === 'agent' || u.role === 'admin';
 const getTicket = (id) => db.prepare(`${TICKET_SELECT} WHERE t.id = ?`).get(id);
 
@@ -46,7 +50,7 @@ function createTicket({ requester, title, description, category, priority = 'med
     `Hola ${requester.name}, registramos tu ticket${source === 'email' ? ' a partir de tu correo' : ''}. Te avisaremos cuando haya novedades.` +
     (source === 'email' ? '\n\nPuedes responder a este mensaje para agregar información al ticket.' : ''));
   mailer.notify(staffEmails(requester.id), `Nuevo ticket (${priority}) de ${requester.department}`, created,
-    `${requester.name} (${requester.email}) creó un ticket de ${category}, prioridad ${priority}${source === 'email' ? ', por correo' : ''}.`);
+    `${requester.name} (${requester.email}) creó un ticket de ${category}, prioridad ${priority}${source === 'email' ? ', por correo' : ''}.\n\nEstá SIN ASIGNAR: entra al sistema para asignarlo a un técnico.`);
   return created;
 }
 

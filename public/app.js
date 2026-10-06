@@ -56,12 +56,16 @@ function authView(mode) {
   const draw = () => {
     app.innerHTML = `<div class="split">
     <aside class="brandpanel"><span class="logochip"><img class="logo-login" src="logo-light.png" alt="Grupo Dupla"></span>
-      <h1>Soporte de <span>Tecnología</span></h1>
+      <p class="tagline">Soporte de Tecnología · Grupo Dupla</p>
+      <h1 class="big">ETIQUE</h1>
       <p>Pide ayuda en segundos y sigue cada solicitud hasta que queda resuelta.</p>
-      <ul class="feats">
-        <li><span class="ic">${ico('plus')}</span>Crea tu ticket desde cualquier lugar</li>
-        <li><span class="ic">${ico('clock')}</span>Mira cómo avanza y quién lo atiende</li>
-        <li><span class="ic">${ico('check')}</span>Consulta la solución cuando se resuelve</li>
+      <ul class="steps6">
+        <li><b>E</b>Escribes tu solicitud</li>
+        <li><b>T</b>Tecnología la recibe</li>
+        <li><b>I</b>Interviene un técnico</li>
+        <li><b>Q</b>Queda resuelta, con su solución</li>
+        <li><b>U</b>Usuario informado en cada paso</li>
+        <li><b>E</b>Evaluamos y mejoramos</li>
       </ul></aside>
     <section class="formside"><div class="card auth">
     <h2>${reg ? 'Crear cuenta' : 'Iniciar sesión'}</h2><p class="muted sub">${needDept ? 'Un último paso: dinos tu nombre y departamento' : 'Usa tu correo de la empresa'}</p>
@@ -135,16 +139,33 @@ async function listView() {
   document.querySelectorAll('tr.row').forEach((r) => (r.onclick = () => (location.hash = '#/ticket/' + r.dataset.id)));
 }
 
+
+// Selector de categoría con la opción "Otra" para escribirla a mano
+function categoryField(current) {
+  const inList = !current || meta.categories.includes(current);
+  return `<label>Categoría</label>
+    <select name="category" class="cat">${options(meta.categories, inList ? current : '__otra__')}<option value="__otra__" ${inList ? '' : 'selected'}>Otra (escribir manualmente)…</option></select>
+    <input name="category_other" class="catother" placeholder="Escribe la categoría" maxlength="60" list="catlist" value="${inList ? '' : esc(current)}" ${inList ? 'hidden' : ''} style="margin-top:8px">
+    <datalist id="catlist">${(meta.extra_categories || []).map((c) => `<option value="${esc(c)}">`).join('')}</datalist>`;
+}
+function wireCategory(root) {
+  const sel = root.querySelector('select.cat'), inp = root.querySelector('input.catother');
+  if (!sel || !inp) return;
+  const sync = (focus) => { const manual = sel.value === '__otra__'; inp.hidden = !manual; inp.required = manual; if (manual && focus) inp.focus(); };
+  sel.addEventListener('change', () => sync(true)); sync(false);
+}
+
 function newView() {
   app.innerHTML = `<div class="card" style="max-width:720px;margin-inline:auto"><h2>Nuevo ticket</h2><p class="muted">Cuéntanos qué necesitas; TI te responderá por aquí y por correo.</p><form id="f">
     <label>Asunto</label><input name="title" maxlength="150" required>
-    <div class="grid2"><div><label>Categoría</label><select name="category">${options(meta.categories)}</select></div>
+    <div class="grid2"><div>${categoryField('')}</div>
     <div><label>Prioridad</label><select name="priority">${options(meta.priorities, 'media')}</select></div></div>
     <label>Descripción</label><textarea name="description" required></textarea>
     <label>Adjuntos (opcional)</label><input type="file" name="files" multiple>
     <p class="muted">Máx. 5 archivos de 10 MB: imágenes, PDF, Office, txt, log, csv, zip.</p>
     <p class="muted">Se registrará a nombre de ${esc(me.name)} (${esc(me.department)}).</p>
     <button>Enviar ticket</button><div class="err" id="err"></div></form></div>`;
+  wireCategory($('#f'));
   $('#f').onsubmit = async (e) => {
     e.preventDefault();
     const files = e.target.files.files;
@@ -183,7 +204,7 @@ async function detailView(id) {
     ${isStaff() ? `<div class="card"><h3>Gestionar</h3><form id="mgr" class="grid2">
       <div><label>Estado</label><select name="status">${options(meta.statuses, t.status)}</select></div>
       <div><label>Prioridad</label><select name="priority">${options(meta.priorities, t.priority)}</select></div>
-      <div><label>Categoría</label><select name="category">${options(meta.categories, t.category)}</select></div>
+      <div>${categoryField(t.category)}</div>
       <div><label>Asignar a</label><select name="assignee_id"><option value="">Sin asignar</option>${options(staff.map((s) => ({ id: s.id, name: s.name })), t.assignee_id)}</select></div>
       <div style="grid-column:1/-1"><label>Solución <span class="muted">(obligatoria para resolver o cerrar; el usuario la verá)</span></label>
         <textarea name="resolution" placeholder="¿Cómo se resolvió?">${esc(t.resolution || '')}</textarea></div>
@@ -206,6 +227,7 @@ async function detailView(id) {
     if (confirm('¿Eliminar este adjunto?')) { await api('/attachments/' + b.dataset.del, { method: 'DELETE' }); detailView(id); }
   }));
   if ($('#cm')) $('#cm').onsubmit = async (e) => { e.preventDefault(); await api(`/tickets/${id}/comments`, { method: 'POST', body: formData(e.target) }); detailView(id); };
+  if (isStaff()) wireCategory($('#mgr'));
   if (isStaff()) $('#mgr').onsubmit = async (e) => {
     e.preventDefault();
     const b = formData(e.target); b.assignee_id = b.assignee_id || null;
@@ -216,23 +238,72 @@ async function detailView(id) {
 // ---------- Admin ----------
 async function adminView() {
   if (me.role !== 'admin') return (location.hash = '#/tickets');
+  const tab = new URLSearchParams(location.hash.split('?')[1] || '').get('tab') === 'mail' ? 'mail' : 'users';
+  const tabs = `<div class="tabs"><a href="#/admin" class="${tab === 'users' ? 'on' : ''}">Usuarios</a><a href="#/admin?tab=mail" class="${tab === 'mail' ? 'on' : ''}">Correo</a></div>`;
+  if (tab === 'mail') return mailAdminView(tabs);
   const users = await api('/admin/users');
-  app.innerHTML = `<div class="pagehead"><div><h2>Administración</h2><span class="muted">Usuarios, roles, departamentos y turnos de almuerzo</span></div></div>
-    <div class="card"><h3>Usuarios</h3><table class="cards"><tr><th>Nombre</th><th>Correo</th><th>Departamento</th><th>Rol</th><th>Almuerzo (TI)</th></tr>
-    ${users.map((u) => `<tr class="row static" data-id="${u.id}"><td class="ttl">${esc(u.name)}</td><td data-label="Correo">${esc(u.email)}</td>
+  app.innerHTML = `<div class="pagehead"><div><h2>Administración</h2><span class="muted">Usuarios, roles, departamentos y turnos de almuerzo</span></div></div>${tabs}
+    <div class="card"><h3>Usuarios</h3><div class="tscroll"><table class="cards"><tr><th>Nombre</th><th>Correo</th><th>Departamento</th><th>Rol</th><th>Almuerzo (TI)</th></tr>
+    ${users.map((u) => `<tr class="row static" data-id="${u.id}"><td class="ttl" data-label="Nombre"><input class="inline" data-f="name" value="${esc(u.name)}" maxlength="100" aria-label="Nombre"></td>
+    <td data-label="Correo"><input class="inline" data-f="email" type="email" value="${esc(u.email)}" maxlength="200" aria-label="Correo"></td>
     <td data-label="Departamento"><select data-f="department_id">${options(meta.departments, u.department_id)}</select></td>
     <td data-label="Rol"><select data-f="role">${options(Object.entries(ROLE_NAMES).map(([id, name]) => ({ id, name })), u.role)}</select></td>
-    <td data-label="Almuerzo">${u.role === 'user' || u.role === 'manager' ? '<span class="muted">—</span>' : `<select data-f="lunch_shift"><option value="">Sin turno</option>${Object.entries(meta.sla.LUNCH_SHIFTS).map(([k, v]) => `<option value="${esc(k)}" ${u.lunch_shift === k ? 'selected' : ''}>Turno ${esc(k)} (${esc(v[0])}–${esc(v[1])})</option>`).join('')}</select>`}</td></tr>`).join('')}</table>
-    <div class="err" id="err"></div><p class="muted">Horario laboral SLA: ${esc(String(meta.sla.START[0]).padStart(2, '0'))}:${esc(String(meta.sla.START[1]).padStart(2, '0'))}–${esc(String(meta.sla.END[0]).padStart(2, '0'))}:${esc(String(meta.sla.END[1]).padStart(2, '0'))} (${esc(meta.sla.TZ)}). El almuerzo pausa el SLA de los tickets asignados a esa persona.</p><p class="muted">Usuario = pide tickets · Técnico (TI) = atiende tickets · Administrador = TI + administra · Gerencia = ve todo y el dashboard, solo lectura</p></div>
+    <td data-label="Almuerzo">${u.role === 'user' || u.role === 'manager' ? '<span class="muted">—</span>' : `<select data-f="lunch_shift"><option value="">Sin turno</option>${Object.entries(meta.sla.LUNCH_SHIFTS).map(([k, v]) => `<option value="${esc(k)}" ${u.lunch_shift === k ? 'selected' : ''}>Turno ${esc(k)} (${esc(v[0])}–${esc(v[1])})</option>`).join('')}</select>`}</td></tr>`).join('')}</table></div>
+    <div class="saved" id="saved" role="status"></div><div class="err" id="err" role="alert"></div><p class="muted">Puedes cambiar aquí el nombre, el correo, el departamento y el rol de cada persona: se guarda al terminar de escribir.</p><p class="muted">Horario laboral SLA: ${esc(String(meta.sla.START[0]).padStart(2, '0'))}:${esc(String(meta.sla.START[1]).padStart(2, '0'))}–${esc(String(meta.sla.END[0]).padStart(2, '0'))}:${esc(String(meta.sla.END[1]).padStart(2, '0'))} (${esc(meta.sla.TZ)}). El almuerzo pausa el SLA de los tickets asignados a esa persona.</p><p class="muted">Usuario = pide tickets · Técnico (TI) = atiende tickets · Administrador = TI + administra · Gerencia = ve todo y el dashboard, solo lectura</p></div>
     <div class="card"><h3>Nuevo departamento</h3><form id="dep" class="filters"><input name="name" required placeholder="Nombre del departamento"><button>Agregar</button></form></div>`;
-  document.querySelectorAll('tr.static select').forEach((s) => (s.onchange = async () => {
-    try { await api('/admin/users/' + s.closest('tr').dataset.id, { method: 'PATCH', body: { [s.dataset.f]: s.value } }); $('#err').textContent = ''; }
-    catch (er) { $('#err').textContent = er.message; adminView(); }
+  document.querySelectorAll('tr.static select, tr.static input').forEach((s) => (s.onchange = async () => {
+    try { await api('/admin/users/' + s.closest('tr').dataset.id, { method: 'PATCH', body: { [s.dataset.f]: s.value } }); $('#err').textContent = ''; $('#saved').textContent = '✔ Guardado'; setTimeout(() => { const el = $('#saved'); if (el) el.textContent = ''; }, 2500); }
+    catch (er) { $('#err').textContent = er.message; $('#saved').textContent = ''; setTimeout(adminView, 2500); }
   }));
   $('#dep').onsubmit = async (e) => {
     e.preventDefault();
     try { await api('/admin/departments', { method: 'POST', body: formData(e.target) }); meta = await api('/meta'); adminView(); }
     catch (er) { $('#err').textContent = er.message; }
+  };
+}
+
+// ---------- Administración: Correo ----------
+async function mailAdminView(tabs) {
+  const st = await api('/admin/mail');
+  const c = st.config;
+  const src = (k) => (c[k].source === 'database' ? '<span class="src db">guardado aquí</span>' : c[k].source === 'env' ? '<span class="src">del archivo .env</span>' : '');
+  const txt = (k, lab, ph = '', type = 'text') => `<div><label>${lab} ${src(k)}</label><input name="${k}" type="${type}" value="${esc(c[k].value ?? '')}" placeholder="${esc(ph)}" maxlength="200" autocomplete="off"></div>`;
+  const pw = (k, lab) => `<div><label>${lab} ${src(k)}</label><input name="${k}" type="password" placeholder="${c[k].set ? '•••••••• (dejar vacío para conservar)' : 'Contraseña'}" autocomplete="new-password"></div>`;
+  const ssl = (k, lab) => `<div><label>${lab}</label><select name="${k}"><option value="true" ${c[k].value !== 'false' ? 'selected' : ''}>Sí (SSL directo)</option><option value="false" ${c[k].value === 'false' ? 'selected' : ''}>No (STARTTLS / sin cifrar)</option></select></div>`;
+  const sslSmtp = `<div><label>SSL directo (puerto 465) ${src('SMTP_SECURE')}</label><select name="SMTP_SECURE"><option value="true" ${c.SMTP_SECURE.value === 'true' ? 'selected' : ''}>Sí</option><option value="false" ${c.SMTP_SECURE.value !== 'true' ? 'selected' : ''}>No (STARTTLS, puerto 587)</option></select></div>`;
+  const last = st.inbox.last;
+  const poll = !st.inbox.enabled ? '<span class="chip off">Desactivada</span>' : last && !last.ok ? `<span class="chip bad">Con error: ${esc(last.error)}</span>` : st.inbox.polling ? `<span class="chip ok">Activa${last ? ' · última revisión ' + esc(new Date(last.at).toLocaleTimeString()) : ''}</span>` : '<span class="chip off">Detenida</span>';
+  const sect = (id, title, desc, body, extra = '') => `<div class="card mailcard" id="s-${id}"><h3>${title}</h3><p class="muted">${desc}</p><div class="grid2">${body}</div>${extra}
+    <div class="testrow"><button type="button" class="ghost" data-test="${id}">Probar conexión</button><div class="result" id="r-${id}" role="status"></div></div></div>`;
+  app.innerHTML = `<div class="pagehead"><div><h2>Administración</h2><span class="muted">Configura el correo y comprueba que conecta</span></div></div>${tabs}
+    <form id="mailForm">
+    ${sect('login', 'Inicio de sesión con el correo', 'Los usuarios entran con su correo y contraseña de la empresa (se validan contra este servidor IMAP; la contraseña no se guarda).',
+      `${txt('IMAP_HOST', 'Servidor IMAP', 'mail.empresa.com')}${txt('IMAP_PORT', 'Puerto', '993')}${ssl('IMAP_SECURE', 'SSL')}
+       <div><label>Usuario de entrada ${src('IMAP_USER_FORMAT')}</label><select name="IMAP_USER_FORMAT"><option value="email" ${c.IMAP_USER_FORMAT.value !== 'local' ? 'selected' : ''}>Correo completo (usuario@dominio)</option><option value="local" ${c.IMAP_USER_FORMAT.value === 'local' ? 'selected' : ''}>Solo la parte antes de @</option></select></div>`,
+      `<div class="grid2"><div><label>Probar con el correo (no se guarda)</label><input id="t-email" type="email" autocomplete="off" placeholder="usuario@grupodupla.com"></div><div><label>Su contraseña (no se guarda)</label><input id="t-pass" type="password" autocomplete="new-password"></div></div>`)}
+    ${sect('inbox', 'Bandeja de soporte (crea tickets)', `Cada correo que llegue aquí se convierte en ticket. Estado: ${poll}`,
+      `${txt('INBOX_HOST', 'Servidor IMAP', 'mail.empresa.com')}${txt('INBOX_PORT', 'Puerto', '993')}${ssl('INBOX_SECURE', 'SSL')}${txt('INBOX_USER', 'Cuenta de soporte', 'soporte@empresa.com')}${pw('INBOX_PASS', 'Contraseña de la cuenta')}${txt('INBOX_POLL_SECONDS', 'Revisar cada (segundos)', '60')}`)}
+    ${sect('smtp', 'Avisos por correo (SMTP)', 'Con este servidor se envían las confirmaciones y respuestas a los usuarios.',
+      `${txt('SMTP_HOST', 'Servidor SMTP', 'mail.empresa.com')}${txt('SMTP_PORT', 'Puerto', '465')}${sslSmtp}${txt('SMTP_USER', 'Usuario', 'soporte@empresa.com')}${pw('SMTP_PASS', 'Contraseña')}${txt('SMTP_FROM', 'Remitente', 'ETIQUE <soporte@empresa.com>')}`,
+      `<div class="grid2"><div><label>Enviar además un correo de prueba a (opcional)</label><input id="t-to" type="email" autocomplete="off" placeholder="tu.correo@grupodupla.com"></div></div>`)}
+    <div class="actions"><button>Guardar configuración</button><span class="saved" id="saved" role="status"></span></div><div class="err" id="err" role="alert"></div>
+    <p class="muted">Lo que guardes aquí tiene prioridad sobre el archivo .env (las contraseñas se guardan cifradas). Para volver a lo del .env, borra el campo y guarda. "Probar conexión" usa lo que está escrito en pantalla aunque aún no lo hayas guardado.</p></form>`;
+  const values = () => Object.fromEntries([...new FormData($('#mailForm'))].map(([k, v]) => [k, v]));
+  const show = (id, r) => { const el = $('#r-' + id); el.className = 'result ' + (r.ok ? 'ok' : 'bad'); el.innerHTML = `<b>${r.ok ? '✔ Conexión exitosa' : '✘ No se pudo conectar'}</b><div>${esc(r.message)}</div>${(r.hints || []).map((h) => `<div class="hint">→ ${esc(h)}</div>`).join('')}`; };
+  document.querySelectorAll('[data-test]').forEach((b) => (b.onclick = async () => {
+    const id = b.dataset.test; const el = $('#r-' + id);
+    b.disabled = true; el.className = 'result'; el.textContent = 'Probando…';
+    try {
+      const body = { what: id, values: values() };
+      if (id === 'login') { body.email = $('#t-email').value; body.password = $('#t-pass').value; }
+      if (id === 'smtp') body.send_to = $('#t-to').value;
+      show(id, await api('/admin/mail/test', { method: 'POST', body }));
+    } catch (er) { el.className = 'result bad'; el.textContent = er.message; } finally { b.disabled = false; }
+  }));
+  $('#mailForm').onsubmit = async (e) => {
+    e.preventDefault();
+    try { await api('/admin/mail', { method: 'PUT', body: { values: values() } }); meta = await api('/meta'); $('#err').textContent = ''; $('#saved').textContent = '✔ Guardado'; setTimeout(mailAdminView, 900, tabs); }
+    catch (er) { $('#err').textContent = er.message; $('#saved').textContent = ''; }
   };
 }
 
@@ -331,7 +402,7 @@ async function route() {
   try {
     if (h.startsWith('/ticket/')) await detailView(h.split('/')[2]);
     else if (h === '/new') newView();
-    else if (h === '/admin') await adminView();
+    else if (h.startsWith('/admin')) await adminView();
     else if (h.startsWith('/reports')) await reportsView();
     else if (h.startsWith('/dashboard')) await dashboardView();
     else if (h === '/' || h === '') await (canViewAll() ? dashboardView() : listView());

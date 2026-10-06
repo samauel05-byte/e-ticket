@@ -24,7 +24,7 @@ const envFile = path.resolve(args.out || path.join(ROOT, '.env'));
 const tzDefault = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
 async function main() {
-  console.log('\nE-Ticket TI · asistente de instalación\n');
+  console.log('\nETIQUE · asistente de instalación\n');
   if (fs.existsSync(envFile) && !args.force) {
     if (yes) { console.error(`Ya existe ${envFile}. Usa --force para sobrescribirlo.`); process.exit(1); }
     const rl0 = readline.createInterface({ input: process.stdin, output: process.stdout });
@@ -68,7 +68,7 @@ async function main() {
     v.SMTP_SECURE = v.SMTP_PORT === '465' ? 'true' : 'false';
     v.SMTP_USER = await ask('smtp-user', 'Usuario SMTP', '');
     if (v.SMTP_USER) v.SMTP_PASS = await ask('smtp-pass', 'Contraseña SMTP', '');
-    v.SMTP_FROM = await ask('smtp-from', 'Remitente de los avisos', `E-Ticket TI <${v.SMTP_USER || 'ti@' + v.ALLOWED_DOMAIN}>`);
+    v.SMTP_FROM = await ask('smtp-from', 'Remitente de los avisos', `ETIQUE <${v.SMTP_USER || 'ti@' + v.ALLOWED_DOMAIN}>`);
   }
 
   console.log('\nTickets por correo: bandeja de soporte (IMAP). Los correos que lleguen ahí se convierten en tickets.');

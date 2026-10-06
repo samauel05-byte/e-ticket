@@ -17,13 +17,17 @@ const mailer = require('./mailer');
 const limiter = require('./rateLimit');
 const netAcl = require('./netAcl');
 const sla = require('./sla');
+const settings = require('./settings');
+const mailCheck = require('./mailCheck');
+const mailIngest = require('./mailIngest');
+settings.applyToEnv(); // lo guardado en Administración tiene prioridad sobre .env
 const { targets: SLA_TARGETS } = sla;
 
 const ALLOWED_DOMAIN = (process.env.ALLOWED_DOMAIN || 'empresa.com').toLowerCase().replace(/^@/, '');
 const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || '').toLowerCase();
 const PORT = process.env.PORT || 3000;
 
-const { STATUSES, PRIORITIES, CATEGORIES, USER_SELECT, getUser, TICKET_SELECT, logEvent, staffEmails, isStaff, createTicket, addComment } = require('./tickets');
+const { STATUSES, PRIORITIES, CATEGORIES, resolveCategory, extraCategories, USER_SELECT, getUser, TICKET_SELECT, logEvent, staffEmails, isStaff, createTicket, addComment } = require('./tickets');
 
 const { UPLOAD_DIR, MAX_MB, MAX_FILES, ALLOWED_EXT, extOf, storedName } = require('./uploads');
 const upload = multer({
@@ -75,7 +79,8 @@ app.use(session({
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
 const wrap = (fn) => (req, res) => {
-  try { fn(req, res); } catch (e) { console.error(e); res.status(500).json({ error: 'Error interno' }); }
+  const fail = (e) => { console.error(e); if (!res.headersSent) res.status(500).json({ error: 'Error interno' }); };
+  try { const r = fn(req, res); if (r && typeof r.catch === 'function') r.catch(fail); } catch (e) { fail(e); }
 };
 const str = (v, max) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
 
@@ -115,7 +120,7 @@ app.get('/api/meta', wrap((req, res) => {
   // Sin sesión solo se expone lo mínimo para mostrar el login (la app puede estar en internet)
   if (!req.session.userId) return res.json({ domain: ALLOWED_DOMAIN, imap: imap.enabled(), departments });
   res.json({
-    domain: ALLOWED_DOMAIN, imap: imap.enabled(), sla: sla.config, statuses: STATUSES, priorities: PRIORITIES, categories: CATEGORIES,
+    domain: ALLOWED_DOMAIN, imap: imap.enabled(), sla: sla.config, statuses: STATUSES, priorities: PRIORITIES, categories: CATEGORIES, extra_categories: extraCategories(),
     departments,
   });
 }));
@@ -214,10 +219,10 @@ app.get('/api/tickets', auth, wrap((req, res) => {
 app.post('/api/tickets', auth, wrap((req, res) => {
   const title = str(req.body.title, 150);
   const description = str(req.body.description, 5000);
-  const category = CATEGORIES.includes(req.body.category) ? req.body.category : null;
+  const category = resolveCategory(req.body.category, req.body.category_other);
   const priority = PRIORITIES.includes(req.body.priority) ? req.body.priority : 'media';
   if (!title || !description || !category)
-    return res.status(400).json({ error: 'Título, descripción y categoría son obligatorios' });
+    return res.status(400).json({ error: 'Título, descripción y categoría son obligatorios (si eliges "Otra", escribe la categoría, de 2 a 60 caracteres)' });
   const created = createTicket({ requester: req.user, title, description, category, priority });
   res.status(201).json(created);
 }));
@@ -238,7 +243,11 @@ app.patch('/api/tickets/:id', auth, staff, wrap((req, res) => {
   if (!t) return res.status(404).json({ error: 'Ticket no encontrado' });
   const status = STATUSES.includes(req.body.status) ? req.body.status : t.status;
   const priority = PRIORITIES.includes(req.body.priority) ? req.body.priority : t.priority;
-  const category = CATEGORIES.includes(req.body.category) ? req.body.category : t.category;
+  let category = t.category;
+  if (req.body.category !== undefined && req.body.category !== '') {
+    category = resolveCategory(req.body.category, req.body.category_other);
+    if (!category) return res.status(400).json({ error: 'Categoría no válida (si eliges "Otra", escríbela, de 2 a 60 caracteres)' });
+  }
   let assignee = t.assignee_id;
   if ('assignee_id' in req.body) {
     if (req.body.assignee_id === null || req.body.assignee_id === '') assignee = null;
@@ -452,6 +461,21 @@ app.patch('/api/admin/users/:id', auth, admin, wrap((req, res) => {
   const u = getUser(Number(req.params.id));
   if (!u) return res.status(404).json({ error: 'Usuario no encontrado' });
   const role = ROLES.includes(req.body.role) ? req.body.role : u.role;
+  // Nombre y correo editables
+  let name = u.name, email = u.email;
+  if (req.body.name !== undefined) {
+    name = str(req.body.name, 100);
+    if (name.length < 2) return res.status(400).json({ error: 'El nombre debe tener al menos 2 letras' });
+  }
+  if (req.body.email !== undefined) {
+    email = str(req.body.email, 200).toLowerCase();
+    if (!/^[^@\s]+@[^@\s]+$/.test(email) || !email.endsWith('@' + ALLOWED_DOMAIN))
+      return res.status(400).json({ error: `El correo debe ser de la empresa (@${ALLOWED_DOMAIN})` });
+    if (email !== u.email) {
+      if (u.id === req.user.id) return res.status(400).json({ error: 'No puedes cambiar tu propio correo (podrías quedarte sin acceso); pídeselo a otro administrador' });
+      if (db.prepare('SELECT 1 FROM users WHERE email = ? AND id != ?').get(email, u.id)) return res.status(409).json({ error: 'Ya existe otro usuario con ese correo' });
+    }
+  }
   let dep = u.department_id;
   if (req.body.department_id !== undefined) {
     if (!db.prepare('SELECT 1 FROM departments WHERE id = ?').get(Number(req.body.department_id)))
@@ -465,8 +489,32 @@ app.patch('/api/admin/users/:id', auth, admin, wrap((req, res) => {
     lunch = req.body.lunch_shift === '' || req.body.lunch_shift === null ? null : String(req.body.lunch_shift);
     if (lunch && !sla.config.LUNCH_SHIFTS[lunch]) return res.status(400).json({ error: 'Turno de almuerzo inválido' });
   }
-  db.prepare('UPDATE users SET role = ?, department_id = ?, lunch_shift = ? WHERE id = ?').run(role, dep, lunch, u.id);
+  db.prepare('UPDATE users SET name = ?, email = ?, role = ?, department_id = ?, lunch_shift = ? WHERE id = ?').run(name, email, role, dep, lunch, u.id);
   res.json(getUser(u.id));
+}));
+
+// ── Correo: configuración y pruebas de conexión (solo administradores) ──
+const mailState = () => ({ config: settings.publicConfig(), inbox: mailIngest.status(), smtp_enabled: mailer.enabled(), login_enabled: imap.enabled() });
+app.get('/api/admin/mail', auth, admin, wrap((req, res) => res.json(mailState())));
+app.put('/api/admin/mail', auth, admin, wrap((req, res) => {
+  try { settings.save(req.body.values || {}, req.user.id); }
+  catch (e) { return res.status(400).json({ error: e.message }); }
+  mailIngest.restart();
+  res.json(mailState());
+}));
+// Prueba lo que hay escrito en el formulario (sin guardarlo); contraseña vacía = la guardada
+app.post('/api/admin/mail/test', auth, admin, wrap(async (req, res) => {
+  let cfg;
+  try { cfg = settings.effective(req.body.values || {}); } catch (e) { return res.status(400).json({ error: e.message }); }
+  const what = req.body.what;
+  if (what === 'inbox') return res.json(await mailCheck.checkInbox(cfg));
+  if (what === 'smtp') {
+    const to = String(req.body.send_to || '').trim().toLowerCase();
+    if (to && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) return res.status(400).json({ error: 'Correo de destino no válido' });
+    return res.json(await mailCheck.checkSmtp(cfg, to || null));
+  }
+  if (what === 'login') return res.json(await mailCheck.checkLogin(cfg, String(req.body.email || '').trim(), String(req.body.password || '')));
+  res.status(400).json({ error: 'Prueba desconocida' });
 }));
 
 app.post('/api/admin/departments', auth, admin, wrap((req, res) => {
@@ -487,8 +535,8 @@ app.use((err, req, res, next) => {
 
 if (require.main === module)
   app.listen(PORT, () => {
-    console.log(`E-Ticket TI en http://localhost:${PORT} (dominio permitido: @${ALLOWED_DOMAIN})`);
-    require('./mailIngest').start();
+    console.log(`ETIQUE en http://localhost:${PORT} (dominio permitido: @${ALLOWED_DOMAIN})`);
+    mailIngest.start();
     const hm = (a) => a.map((n) => String(n).padStart(2, '0')).join(':');
     console.log(`SLA: ${hm(sla.config.START)}–${hm(sla.config.END)} zona ${sla.config.TZ}`);
     if (!process.env.SLA_TZ && sla.config.TZ === 'UTC')

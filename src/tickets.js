@@ -6,6 +6,19 @@ const STATUSES = ['abierto', 'en_progreso', 'en_espera', 'resuelto', 'cerrado'];
 const PRIORITIES = ['baja', 'media', 'alta', 'urgente'];
 const CATEGORIES = ['Hardware', 'Software', 'Red / Internet', 'Correo', 'Accesos / Contraseñas', 'Impresoras', 'Otro'];
 
+// Categoría: una de la lista, o escrita a mano (valor "__otra__" + texto). Devuelve null si no es válida.
+function resolveCategory(selected, other) {
+  if (CATEGORIES.includes(selected)) return selected;
+  if (selected !== '__otra__') return null;
+  const t = String(other || '').replace(/[\u0000-\u001f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60);
+  if (t.length < 2) return null;
+  const known = CATEGORIES.find((c) => c.toLowerCase() === t.toLowerCase()); // "hardware" -> "Hardware"
+  return known || t.charAt(0).toUpperCase() + t.slice(1);
+}
+// Categorías escritas a mano que ya se usaron (para sugerirlas)
+const extraCategories = () => db.prepare(`SELECT category FROM tickets WHERE category NOT IN (${CATEGORIES.map(() => '?').join(',')})
+  GROUP BY category ORDER BY COUNT(*) DESC LIMIT 20`).all(...CATEGORIES).map((r) => r.category);
+
 const USER_SELECT = `SELECT u.id, u.email, u.name, u.role, u.lunch_shift, u.department_id, d.name AS department
   FROM users u JOIN departments d ON d.id = u.department_id`;
 const getUser = (id) => db.prepare(`${USER_SELECT} WHERE u.id = ?`).get(id);
@@ -51,4 +64,4 @@ function addComment({ ticket, user, body }) {
   return full;
 }
 
-module.exports = { STATUSES, PRIORITIES, CATEGORIES, USER_SELECT, getUser, getUserByEmail, TICKET_SELECT, getTicket, logEvent, staffEmails, isStaff, createTicket, addComment };
+module.exports = { STATUSES, PRIORITIES, CATEGORIES, resolveCategory, extraCategories, USER_SELECT, getUser, getUserByEmail, TICKET_SELECT, getTicket, logEvent, staffEmails, isStaff, createTicket, addComment };

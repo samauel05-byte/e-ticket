@@ -1,4 +1,4 @@
-/* E-Ticket TI · Grupo Dupla — rojo #eb1c26 y carbón #252525 */
+/* ETIQUE · Grupo Dupla — rojo #eb1c26 y carbón #252525 */
 :root{
   --bg:#f3f4f7;--card:#fff;--fg:#1c1e22;--muted:#677084;--bd:#e4e7ec;--soft:#f0f2f6;
   --ink:#1d1e21;--ink2:#2c2d31;
@@ -27,10 +27,14 @@ svg.i{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:2;stroke
 
 /* ── Barra superior: siempre oscura, el logo va sobre una pastilla blanca ── */
 header{position:sticky;top:0;z-index:20;display:flex;gap:10px 22px;align-items:center;padding:10px 22px;background:linear-gradient(180deg,var(--ink2),var(--ink));color:#fff;border-bottom:3px solid var(--pri);box-shadow:0 6px 24px rgba(0,0,0,.18);flex-wrap:wrap}
-.brand{display:flex;align-items:center;gap:12px;color:#fff}.brand:hover{text-decoration:none}
+.brand{display:flex;align-items:center;gap:18px;color:#fff;border-radius:12px}.brand:hover{text-decoration:none}
+.brand:focus-visible{outline:2px solid rgba(255,255,255,.4);outline-offset:6px}
 .logochip{display:flex;align-items:center}
+.brand .logochip{padding-right:18px;border-right:1px solid rgba(255,255,255,.22)}
+.brand .name{display:flex;flex-direction:column;line-height:1.1}
+.brand .name b{font-size:19px;letter-spacing:3px;font-weight:800}
+.brand .name small{font-size:10.5px;color:#aab0bb;letter-spacing:.6px;text-transform:uppercase;font-weight:600;margin-top:3px}
 .logo-top{height:38px;width:auto;display:block}
-.brand strong{font-size:15px;letter-spacing:.3px;font-weight:700}.brand strong span{color:var(--pri);}
 header nav{display:flex;gap:4px;flex:1;flex-wrap:wrap}
 header nav a{color:#d7dae0;padding:8px 14px;border-radius:10px;font-weight:600;font-size:14px;display:inline-flex;align-items:center;gap:7px;transition:background .15s,color .15s}
 header nav a:hover{background:rgba(255,255,255,.1);color:#fff;text-decoration:none}
@@ -195,7 +199,7 @@ details.card summary{cursor:pointer;font-weight:700;font-size:16px}details.card[
 /* ── Celular: la tabla se vuelve tarjetas ── */
 @media(max-width:700px){
   main{margin:16px auto 40px}
-  header{padding:9px 12px;gap:8px 12px}.brand strong{display:none}.userbox .who{display:none}
+  header{padding:9px 12px;gap:8px 12px}.brand{gap:12px}.brand .logochip{padding-right:12px}.brand .name b{font-size:16px;letter-spacing:2px}.brand .name small{display:none}.userbox .who{display:none}
   .brand{order:1}.userbox{order:2;margin-left:auto}
   header nav{order:3;flex:1 1 100%;flex-wrap:nowrap;overflow-x:auto;gap:6px;padding-bottom:3px;-webkit-overflow-scrolling:touch}
   header nav a{white-space:nowrap;background:rgba(255,255,255,.08)}header nav a.active{background:var(--pri)}
@@ -224,3 +228,28 @@ table.cards td select{width:auto;max-width:100%}
 @media(max-width:700px){.seg a{padding:7px 8px;font-size:12px}}
 
 .src{color:var(--info);font-weight:700}.b-info{background:var(--info-bg);color:var(--info)}
+
+.steps6{list-style:none;margin:6px 0 0;padding:0;display:grid;gap:10px;position:relative;z-index:1}
+.steps6 li{display:flex;align-items:center;gap:12px;color:#e6e8ec;font-weight:500}
+.steps6 li b{width:30px;height:30px;border-radius:9px;background:var(--pri);color:#fff;display:inline-flex;align-items:center;justify-content:center;font-size:15px;font-weight:800;flex:none;box-shadow:0 4px 12px rgba(235,28,38,.35)}
+.brandpanel .tagline{font-size:12px;text-transform:uppercase;letter-spacing:2px;color:#ff7076;font-weight:700;margin:0}
+.brandpanel h1.big{font-size:56px;letter-spacing:6px;margin:2px 0 0}
+@media(max-width:860px){.brandpanel h1.big{font-size:38px;letter-spacing:4px}.steps6{display:none}}
+.inline{padding:7px 9px;border-radius:9px;font-size:14px;min-width:0}
+.saved{color:var(--ok);font-weight:700;font-size:13px;min-height:20px}
+tr.static input.inline{width:100%}
+tr.static input[data-f=email]{min-width:250px}
+tr.static input[data-f=name]{min-width:170px}
+.tscroll{overflow-x:auto;margin:0 -4px;padding:0 4px}
+tr.static input[data-f=email]{min-width:230px}
+tr.static select{min-width:120px}
+
+/* Administración: pestañas y pruebas de correo */
+.tabs{display:flex;gap:6px;margin-bottom:16px;border-bottom:1px solid var(--bd)}
+.tabs a{padding:10px 18px;font-weight:700;color:var(--muted);text-decoration:none;border-bottom:3px solid transparent;margin-bottom:-1px}
+.tabs a.on{color:var(--pri);border-bottom-color:var(--pri)}
+.src{font-weight:500;font-size:11px;color:var(--muted);margin-left:4px}.src.db{color:var(--ok)}
+.testrow{display:flex;gap:14px;align-items:flex-start;margin-top:14px;flex-wrap:wrap}.testrow button{margin:0}
+.result{flex:1;min-width:220px;font-size:14px}.result.ok{color:var(--ok)}.result.bad{color:var(--bad)}.result .hint{color:var(--muted);font-size:13px}
+.chip{display:inline-block;padding:2px 10px;border-radius:99px;font-size:12px;font-weight:700;background:var(--bd);color:var(--muted)}.chip.ok{background:#16a34a22;color:var(--ok)}.chip.bad{background:#dc262622;color:var(--bad)}
+.actions{display:flex;align-items:center;gap:14px;margin:6px 0 10px}

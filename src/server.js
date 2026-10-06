@@ -120,7 +120,7 @@ app.get('/api/meta', wrap((req, res) => {
   // Sin sesión solo se expone lo mínimo para mostrar el login (la app puede estar en internet)
   if (!req.session.userId) return res.json({ domain: ALLOWED_DOMAIN, imap: imap.enabled(), departments });
   res.json({
-    domain: ALLOWED_DOMAIN, imap: imap.enabled(), sla: sla.config, statuses: STATUSES, priorities: PRIORITIES, categories: CATEGORIES, extra_categories: extraCategories(),
+    domain: ALLOWED_DOMAIN, imap: imap.enabled(), sla: sla.config, statuses: STATUSES, priorities: PRIORITIES, categories: CATEGORIES.filter((c) => c !== 'Otro'), extra_categories: extraCategories(),
     departments,
   });
 }));
@@ -196,6 +196,18 @@ app.post('/api/login', async (req, res) => {
 
 app.post('/api/logout', (req, res) => req.session.destroy(() => res.json({ ok: true })));
 app.get('/api/me', auth, (req, res) => res.json(req.user));
+// Cada persona edita su propio nombre y departamento (el correo y el rol los cambia un administrador)
+app.patch('/api/me', auth, wrap((req, res) => {
+  const name = str(req.body.name ?? req.user.name, 100);
+  if (name.length < 2) return res.status(400).json({ error: 'Escribe tu nombre (mínimo 2 letras)' });
+  let dep = req.user.department_id;
+  if (req.body.department_id !== undefined) {
+    dep = Number(req.body.department_id);
+    if (!db.prepare('SELECT 1 FROM departments WHERE id = ?').get(dep)) return res.status(400).json({ error: 'Departamento no válido' });
+  }
+  db.prepare('UPDATE users SET name = ?, department_id = ? WHERE id = ?').run(name, dep, req.user.id);
+  res.json(getUser(req.user.id));
+}));
 
 // ---------- Tickets ----------
 const canSee = (u, t) => canViewAll(u) || t.requester_id === u.id;

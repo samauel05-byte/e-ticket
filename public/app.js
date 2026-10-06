@@ -262,6 +262,26 @@ async function adminView() {
   };
 }
 
+// ---------- Mi perfil ----------
+function profileView() {
+  app.innerHTML = `<div class="pagehead"><div><h2>Mi perfil</h2><span class="muted">Cambia tu nombre y tu departamento</span></div></div>
+    <div class="card"><form id="pf"><div class="grid2">
+      <div><label>Nombre completo</label><input name="name" required minlength="2" maxlength="100" value="${esc(me.name)}"></div>
+      <div><label>Departamento</label><select name="department_id">${options(meta.departments, me.department_id)}</select></div>
+      <div><label>Correo</label><input value="${esc(me.email)}" disabled></div>
+      <div><label>Rol</label><input value="${esc(ROLE_NAMES[me.role] || me.role)}" disabled></div></div>
+      <button>Guardar</button> <span class="saved" id="saved" role="status"></span><div class="err" id="err" role="alert"></div>
+      <p class="muted">El correo y el rol los cambia un administrador.</p></form></div>`;
+  $('#pf').onsubmit = async (e) => {
+    e.preventDefault();
+    try {
+      me = await api('/me', { method: 'PATCH', body: formData(e.target) });
+      $('#who').innerHTML = `${esc(me.name)}<small>${esc(me.department)}</small>`; $('#avatar').textContent = initials(me.name);
+      $('#err').textContent = ''; $('#saved').textContent = '✔ Guardado';
+    } catch (er) { $('#err').textContent = er.message; $('#saved').textContent = ''; }
+  };
+}
+
 // ---------- Administración: Correo ----------
 async function mailAdminView(tabs) {
   const st = await api('/admin/mail');
@@ -402,6 +422,7 @@ async function route() {
   try {
     if (h.startsWith('/ticket/')) await detailView(h.split('/')[2]);
     else if (h === '/new') newView();
+    else if (h === '/profile') profileView();
     else if (h.startsWith('/admin')) await adminView();
     else if (h.startsWith('/reports')) await reportsView();
     else if (h.startsWith('/dashboard')) await dashboardView();

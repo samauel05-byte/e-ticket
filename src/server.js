@@ -98,14 +98,22 @@ function auth(req, res, next) {
   req.user = u;
   next();
 }
-const staff = (req, res, next) =>
-  req.user.role === 'agent' || req.user.role === 'admin' ? next() : res.status(403).json({ error: 'Sin permiso' });
+const staff = (req, res, next) => (isStaff(req.user) ? next() : res.status(403).json({ error: 'Sin permiso' }));
 const admin = (req, res, next) =>
   req.user.role === 'admin' ? next() : res.status(403).json({ error: 'Sin permiso' });
-// Roles: user (pide tickets), agent (TI), admin (TI + administra), manager (gerencia: ve todo, solo lectura)
-const ROLES = ['user', 'agent', 'admin', 'manager'];
-const canViewAll = (u) => u.role === 'agent' || u.role === 'admin' || u.role === 'manager';
+// Roles:
+//  user        pide tickets y ve los suyos
+//  leader      líder de departamento: además ve (solo lectura) los tickets de su departamento
+//  agent       técnico de TI: gestiona tickets; su dashboard solo muestra lo suyo; sin reportes ni administración
+//  coordinator encargado de TI: ve todo, asigna, dashboard de todo el equipo y reportes; sin administración
+//  manager     gerencia: ve todo, dashboard y reportes, solo lectura
+//  admin       TI + administración de usuarios y correo
+const ROLES = ['user', 'leader', 'agent', 'coordinator', 'manager', 'admin'];
+const canViewAll = (u) => ['agent', 'coordinator', 'manager', 'admin'].includes(u.role);
+const ASSIGNABLE = ['agent', 'admin']; // a quienes se les asignan tickets: Tecnología y Administración
+const canReports = (u) => ['coordinator', 'manager', 'admin'].includes(u.role);
 const viewer = (req, res, next) => (canViewAll(req.user) ? next() : res.status(403).json({ error: 'Sin permiso' }));
+const reportsViewer = (req, res, next) => (canReports(req.user) ? next() : res.status(403).json({ error: 'Sin permiso' }));
 const notManager = (req, res, next) => (req.user.role === 'manager' ? res.status(403).json({ error: 'Gerencia tiene acceso de solo lectura' }) : next());
 
 // Opcional: Administración, Reportes y Dashboard solo desde la red interna (INTERNAL_CIDRS="192.168.0.0/16,10.0.0.0/8")
@@ -210,11 +218,12 @@ app.patch('/api/me', auth, wrap((req, res) => {
 }));
 
 // ---------- Tickets ----------
-const canSee = (u, t) => canViewAll(u) || t.requester_id === u.id;
+const canSee = (u, t) => canViewAll(u) || t.requester_id === u.id || (u.role === 'leader' && t.department_id === u.department_id);
 
 app.get('/api/tickets', auth, wrap((req, res) => {
   const where = []; const args = [];
-  if (!canViewAll(req.user)) { where.push('t.requester_id = ?'); args.push(req.user.id); }
+  if (req.user.role === 'leader') { where.push('(t.requester_id = ? OR t.department_id = ?)'); args.push(req.user.id, req.user.department_id); }
+  else if (!canViewAll(req.user)) { where.push('t.requester_id = ?'); args.push(req.user.id); }
   const { status, department_id, priority, q, assignee_id } = req.query;
   if (STATUSES.includes(status)) { where.push('t.status = ?'); args.push(status); }
   if (PRIORITIES.includes(priority)) { where.push('t.priority = ?'); args.push(priority); }
@@ -265,7 +274,7 @@ app.patch('/api/tickets/:id', auth, staff, wrap((req, res) => {
     if (req.body.assignee_id === null || req.body.assignee_id === '') assignee = null;
     else {
       const a = getUser(Number(req.body.assignee_id));
-      if (!a || !isStaff(a)) return res.status(400).json({ error: 'Asignado inválido' });
+      if (!a || !ASSIGNABLE.includes(a.role)) return res.status(400).json({ error: 'Solo se puede asignar a personal de Tecnología o Administración' });
       assignee = a.id;
     }
   }
@@ -324,7 +333,7 @@ app.post('/api/tickets/:id/attachments', auth, notManager, loadTicket, upload.ar
 }));
 
 app.get('/api/attachments/:id', auth, wrap((req, res) => {
-  const a = db.prepare('SELECT a.*, t.requester_id FROM attachments a JOIN tickets t ON t.id = a.ticket_id WHERE a.id = ?')
+  const a = db.prepare('SELECT a.*, t.requester_id, t.department_id FROM attachments a JOIN tickets t ON t.id = a.ticket_id WHERE a.id = ?')
     .get(Number(req.params.id));
   if (!a || !canSee(req.user, a)) return res.status(404).json({ error: 'Archivo no encontrado' });
   res.set('X-Content-Type-Options', 'nosniff');
@@ -334,7 +343,7 @@ app.get('/api/attachments/:id', auth, wrap((req, res) => {
 }));
 
 app.delete('/api/attachments/:id', auth, wrap((req, res) => {
-  const a = db.prepare('SELECT a.*, t.requester_id FROM attachments a JOIN tickets t ON t.id = a.ticket_id WHERE a.id = ?')
+  const a = db.prepare('SELECT a.*, t.requester_id, t.department_id FROM attachments a JOIN tickets t ON t.id = a.ticket_id WHERE a.id = ?')
     .get(Number(req.params.id));
   if (!a || !canSee(req.user, a)) return res.status(404).json({ error: 'Archivo no encontrado' });
   if (a.user_id !== req.user.id && req.user.role !== 'admin') return res.status(403).json({ error: 'Sin permiso' });
@@ -391,7 +400,7 @@ function summarize(name, list) {
   };
 }
 
-app.get('/api/reports', auth, viewer, wrap((req, res) => {
+app.get('/api/reports', auth, reportsViewer, wrap((req, res) => {
   const r = rangeOf(req.query);
   const rows = db.prepare(`${TICKET_SELECT} ${r.sql}`).all(...r.args).map((t) => withSla(t));
   res.json({
@@ -411,7 +420,7 @@ const csvCell = (v) => {
   if (/^[=+\-@\t\r]/.test(s)) s = "'" + s; // evita fórmulas al abrir en Excel
   return /[",\n\r;]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
 };
-app.get('/api/reports/export.csv', auth, viewer, wrap((req, res) => {
+app.get('/api/reports/export.csv', auth, reportsViewer, wrap((req, res) => {
   const r = rangeOf(req.query);
   const rows = db.prepare(`${TICKET_SELECT} ${r.sql} ORDER BY t.id`).all(...r.args).map((t) => withSla(t));
   const head = ['id', 'titulo', 'categoria', 'prioridad', 'estado', 'solicitante', 'departamento', 'asignado', 'creado_utc',
@@ -434,7 +443,9 @@ app.get('/api/dashboard', auth, viewer, wrap((req, res) => {
   const q = { from: req.query.from, to: req.query.to };
   if (!ymd(q.from) && !ymd(q.to)) q.from = localDay(Date.now() - (days - 1) * 86400000);
   const r = rangeOf(q);
-  const rows = db.prepare(`${TICKET_SELECT} ${r.sql}`).all(...r.args).map((t) => withSla(t));
+  const own = req.user.role === 'agent'; // el técnico solo ve su propio dashboard
+  let rows = db.prepare(`${TICKET_SELECT} ${r.sql}`).all(...r.args).map((t) => withSla(t));
+  if (own) rows = rows.filter((t) => t.assignee_id === req.user.id);
 
   const stat = (name, list) => {
     const x = summarize(name, list);
@@ -442,7 +453,7 @@ app.get('/api/dashboard', auth, viewer, wrap((req, res) => {
     x.overdue_open = list.filter((t) => !t.resolved_at && (t.sla_response_breached || t.sla_resolve_breached)).length;
     return x;
   };
-  const team = db.prepare(`${USER_SELECT} WHERE u.role IN ('agent','admin') ORDER BY u.name`).all()
+  const team = db.prepare(`${USER_SELECT} WHERE u.role IN ('agent','admin') ${own ? 'AND u.id = ?' : ''} ORDER BY u.name`).all(...(own ? [req.user.id] : []))
     .map((u) => ({ id: u.id, email: u.email, role: u.role, ...stat(u.name, rows.filter((t) => t.assignee_id === u.id)) }))
     .sort((a, b) => b.total - a.total || a.name.localeCompare(b.name));
 
@@ -450,7 +461,7 @@ app.get('/api/dashboard', auth, viewer, wrap((req, res) => {
   const trend = [];
   for (let i = 13; i >= 0; i--) trend.push({ day: localDay(Date.now() - i * 86400000), created: 0, resolved: 0 });
   const idx = new Map(trend.map((d, i) => [d.day, i]));
-  for (const t of db.prepare("SELECT created_at, resolved_at FROM tickets WHERE created_at >= datetime('now','-16 days') OR resolved_at >= datetime('now','-16 days')").all()) {
+  for (const t of db.prepare(`SELECT created_at, resolved_at FROM tickets WHERE (created_at >= datetime('now','-16 days') OR resolved_at >= datetime('now','-16 days')) ${own ? 'AND assignee_id = ?' : ''}`).all(...(own ? [req.user.id] : []))) {
     const c = idx.get(localDay(toMs(t.created_at))); if (c !== undefined) trend[c].created++;
     if (t.resolved_at) { const k = idx.get(localDay(toMs(t.resolved_at))); if (k !== undefined) trend[k].resolved++; }
   }
@@ -458,7 +469,8 @@ app.get('/api/dashboard', auth, viewer, wrap((req, res) => {
     from: r.from, to: r.to, days,
     summary: stat('Total', rows),
     team,
-    unassigned: stat('Sin asignar', rows.filter((t) => !t.assignee_id)),
+    unassigned: own ? null : stat('Sin asignar', rows.filter((t) => !t.assignee_id)),
+    scope: own ? 'own' : 'all',
     by_department: group(rows, (t) => t.department).slice(0, 8),
     trend,
   });

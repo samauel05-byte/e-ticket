@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS users (
   name TEXT NOT NULL,
   password_hash TEXT NOT NULL,
   department_id INTEGER NOT NULL REFERENCES departments(id),
-  role TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('user','agent','admin','manager')),
+  role TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('user','leader','agent','coordinator','manager','admin')),
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE TABLE IF NOT EXISTS tickets (
@@ -61,9 +61,9 @@ if (!cols.includes('resolved_at')) db.exec('ALTER TABLE tickets ADD COLUMN resol
 if (!db.prepare('PRAGMA table_info(users)').all().some((c) => c.name === 'lunch_shift'))
   db.exec('ALTER TABLE users ADD COLUMN lunch_shift TEXT');
 
-// Migración: el rol "manager" (gerencia) no existía en la restricción CHECK de las bases anteriores.
+// Migración: los roles "manager", "leader" y "coordinator" no existían en la restricción CHECK de las bases anteriores.
 // SQLite no permite modificarla: se reconstruye la tabla conservando los datos.
-if (!/'manager'/.test(db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='users'").get().sql)) {
+if (!/'coordinator'/.test(db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='users'").get().sql)) {
   db.pragma('foreign_keys = OFF');
   db.transaction(() => {
     db.exec(`CREATE TABLE users_new (
@@ -72,7 +72,7 @@ if (!/'manager'/.test(db.prepare("SELECT sql FROM sqlite_master WHERE type='tabl
       name TEXT NOT NULL,
       password_hash TEXT NOT NULL,
       department_id INTEGER NOT NULL REFERENCES departments(id),
-      role TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('user','agent','admin','manager')),
+      role TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('user','leader','agent','coordinator','manager','admin')),
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       lunch_shift TEXT
     );

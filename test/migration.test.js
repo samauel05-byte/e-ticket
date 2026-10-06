@@ -27,6 +27,7 @@ test('migración: una base anterior (sin rol manager, solución ni origen) se ac
   const code = `
     const db = require('./src/db');
     db.prepare("INSERT INTO users (email,name,password_hash,department_id,role) VALUES ('g@empresa.com','G','x',1,'manager')").run();
+    db.prepare("INSERT INTO users (email,name,password_hash,department_id,role) VALUES ('l@empresa.com','L','x',1,'leader'),('e@empresa.com','E','x',1,'coordinator')").run();
     console.log(JSON.stringify({
       users: db.prepare('SELECT email, role FROM users ORDER BY id').all(),
       ticket: db.prepare('SELECT title, requester_id, source, resolution FROM tickets').get(),
@@ -35,7 +36,7 @@ test('migración: una base anterior (sin rol manager, solución ni origen) se ac
   const r = spawnSync(process.execPath, ['-e', code], { cwd: path.join(__dirname, '..'), env: { ...process.env, DB_PATH: file }, encoding: 'utf8' });
   assert.equal(r.status, 0, r.stderr);
   const out = JSON.parse(r.stdout.trim().split('\n').pop());
-  assert.deepEqual(out.users.map((u) => u.role), ['admin', 'user', 'manager']);
+  assert.deepEqual(out.users.map((u) => u.role), ['admin', 'user', 'manager', 'leader', 'coordinator']);
   assert.deepEqual(out.ticket, { title: 'Mi ticket', requester_id: 2, source: 'web', resolution: null });
   assert.equal(out.fk, 0);
 });

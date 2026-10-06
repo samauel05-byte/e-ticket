@@ -52,6 +52,8 @@ const server = app.listen(port, () => {
   Usuarios (clave: prueba1234)
     admin@empresa.com    administrador
     tecnico@, samuel@ y laura@empresa.com  personal de TI
+    encargado@empresa.com  encargado de TI (ve todo, asigna, reportes; sin administración)
+    lider@empresa.com  líder de Finanzas (ve los tickets de su departamento)
     gerencia@empresa.com  gerencia (dashboard, solo lectura)
     ana@, luis@ y marta@empresa.com   usuarios que piden tickets
 

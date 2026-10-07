@@ -161,16 +161,31 @@ function newView() {
     <label>Asunto</label><input name="title" maxlength="150" required>
     <div class="grid2"><div>${categoryField('')}</div>
     <div><label>Prioridad</label><select name="priority">${options(meta.priorities, 'media')}</select></div></div>
+    <div id="catform"></div>
     <label>Descripción</label><textarea name="description" required></textarea>
     <label>Adjuntos (opcional)</label><input type="file" name="files" multiple>
     <p class="muted">Máx. 5 archivos de 10 MB: imágenes, PDF, Office, txt, log, csv, zip.</p>
     <p class="muted">Se registrará a nombre de ${esc(me.name)} (${esc(me.department)}).</p>
     <button>Enviar ticket</button><div class="err" id="err"></div></form></div>`;
   wireCategory($('#f'));
+  // Formulario propio de la categoría (p. ej. "Alta de usuario"): se pinta al elegirla
+  const renderForm = () => {
+    const def = (meta.forms || {})[$('#f select.cat').value] || [];
+    $('#catform').innerHTML = def.length ? `<div class="catform"><h3>Datos de la solicitud</h3>${def.map((f) => {
+      const n = `form__${esc(f.key)}`, req = f.required ? 'required' : '';
+      const input = f.type === 'textarea' ? `<textarea name="${n}" ${req} maxlength="3000"></textarea>`
+        : f.type === 'select' ? `<select name="${n}" ${req}><option value="">Elige…</option>${f.options.map((o) => `<option>${esc(o)}</option>`).join('')}</select>`
+        : f.type === 'date' ? `<input type="date" name="${n}" ${req}>` : `<input name="${n}" ${req} maxlength="500">`;
+      return `<label>${esc(f.label)}${f.required ? ' *' : ''}</label>${input}`;
+    }).join('')}</div>` : '';
+  };
+  $('#f select.cat').addEventListener('change', renderForm); renderForm();
   $('#f').onsubmit = async (e) => {
     e.preventDefault();
     const files = e.target.files.files;
     const body = formData(e.target); delete body.files;
+    body.form = {};
+    for (const k of Object.keys(body)) if (k.startsWith('form__')) { body.form[k.slice(6)] = body[k]; delete body[k]; }
     let t;
     try { t = await api('/tickets', { method: 'POST', body }); } catch (er) { return ($('#err').textContent = er.message); }
     try { await upload(t.id, files); } catch (er) { alert('El ticket se creó, pero los adjuntos fallaron: ' + er.message); }
@@ -191,6 +206,7 @@ const stepOf = (s) => (s === 'abierto' ? 0 : s === 'en_progreso' || s === 'en_es
 async function detailView(id) {
   const t = await api('/tickets/' + id);
   const staff = isStaff() ? await api('/staff') : [];
+  const templates = isStaff() ? await api('/templates') : [];
   const cur = stepOf(t.status);
   const steps = ['Abierto', 'En progreso', t.status === 'cerrado' ? 'Cerrado' : 'Resuelto'];
   app.innerHTML = `<div class="card"><a href="#/tickets">← Volver a tickets</a>
@@ -201,6 +217,7 @@ async function detailView(id) {
     <div class="sla">${slaBox('Primera respuesta', t.first_response_at, t.response_hours, t.sla_response_target_h, t.sla_response_due, t.sla_response_breached, t.sla_paused)}
     ${slaBox('Resolución', t.resolved_at, t.resolve_hours, t.sla_resolve_target_h, t.sla_resolve_due, t.sla_resolve_breached, t.sla_paused)}</div>
     <div class="desc">${esc(t.description)}</div>
+    ${t.form && t.form.length ? `<div class="formdata"><b>Datos de la solicitud</b><dl>${t.form.map((f) => `<dt>${esc(f.label)}</dt><dd>${esc(f.value)}</dd>`).join('')}</dl></div>` : ''}
     ${t.resolution ? `<div class="solution"><b>Solución</b><div>${esc(t.resolution)}</div></div>` : ''}
     ${t.can_confirm || t.can_reopen ? `<div class="confirmbar">${t.can_confirm ? '<span>¿Quedó resuelto?</span><button id="confirm">✔ Sí, cerrar el ticket</button>' : ''}${t.can_reopen ? '<button id="reopen" class="ghost">↺ Reabrir ticket</button>' : ''}</div><div class="err" id="aerr" role="alert"></div>` : ''}</div>
     ${isStaff() ? `<div class="card"><h3>Gestionar</h3><form id="mgr" class="grid2">
@@ -220,7 +237,7 @@ async function detailView(id) {
       <div class="comments">${t.comments.map((c) => `<div class="comment ${c.role !== 'user' ? 'ti' : ''} ${c.internal ? 'internal' : ''}">${avatar(c.author)}<div class="bubble">
         <div class="head"><strong>${esc(c.author)}</strong>${c.role !== 'user' ? '<span class="tag">TI</span>' : ''}${c.internal ? '<span class="tag note">🔒 Nota interna</span>' : ''} <span class="muted">${esc(c.created_at)} UTC</span></div>
         <div class="body">${esc(c.body)}</div></div></div>`).join('') || '<p class="muted">Aún no hay mensajes.</p>'}</div>
-      ${isManager() ? '<p class="muted">Gerencia tiene acceso de solo lectura.</p>' : `<form id="cm"><textarea name="body" required placeholder="Escribe un comentario…"></textarea>${isStaff() ? '<label class="chk"><input type="checkbox" name="internal"> 🔒 Nota interna (solo la ve el equipo de TI, no el solicitante)</label>' : ''}<button>Enviar comentario</button></form>`}</div>
+      ${isManager() ? '<p class="muted">Gerencia tiene acceso de solo lectura.</p>' : `<form id="cm">${isStaff() && templates.length ? `<label>Respuesta rápida</label><select id="tpl"><option value="">Elegir una plantilla…</option>${templates.map((x) => `<option value="${x.id}">${esc(x.title)}</option>`).join('')}</select>` : ''}<textarea name="body" required placeholder="Escribe un comentario…"></textarea>${isStaff() ? '<label class="chk"><input type="checkbox" name="internal"> 🔒 Nota interna (solo la ve el equipo de TI, no el solicitante)</label>' : ''}<button>Enviar comentario</button></form>`}</div>
     <details class="card"><summary>Historial del ticket (${t.history.length})</summary><ul class="history">${t.history.map((h) => `<li><span class="muted">${esc(h.at)} UTC</span> ${esc(h.text)}${h.actor ? ` <span class="muted">· ${esc(h.actor)}</span>` : ''}</li>`).join('')}</ul></details>`;
   if ($('#up')) $('#up').onsubmit = async (e) => {
     e.preventDefault();
@@ -229,6 +246,12 @@ async function detailView(id) {
   document.querySelectorAll('[data-del]').forEach((b) => (b.onclick = async () => {
     if (confirm('¿Eliminar este adjunto?')) { await api('/attachments/' + b.dataset.del, { method: 'DELETE' }); detailView(id); }
   }));
+  if ($('#tpl')) $('#tpl').onchange = (e) => {
+    const x = templates.find((q) => String(q.id) === e.target.value);
+    if (!x) return;
+    const text = x.body.replace(/\{\{\s*nombre\s*\}\}/gi, t.requester_name.split(' ')[0]).replace(/\{\{\s*ticket\s*\}\}/gi, `#${t.id}`).replace(/\{\{\s*tecnico\s*\}\}/gi, me.name);
+    const ta = $('#cm textarea'); ta.value = ta.value ? ta.value + '\n\n' + text : text; ta.focus(); e.target.value = '';
+  };
   if ($('#cm')) $('#cm').onsubmit = async (e) => { e.preventDefault(); const b = formData(e.target); b.internal = Boolean(e.target.internal?.checked); await api(`/tickets/${id}/comments`, { method: 'POST', body: b }); detailView(id); };
   if ($('#confirm')) $('#confirm').onclick = async () => { try { await api(`/tickets/${id}/confirm`, { method: 'POST', body: {} }); detailView(id); } catch (er) { $('#aerr').textContent = er.message; } };
   if ($('#reopen')) $('#reopen').onclick = async () => {
@@ -247,9 +270,11 @@ async function detailView(id) {
 // ---------- Admin ----------
 async function adminView() {
   if (me.role !== 'admin') return (location.hash = '#/tickets');
-  const tab = new URLSearchParams(location.hash.split('?')[1] || '').get('tab') === 'mail' ? 'mail' : 'users';
-  const tabs = `<div class="tabs"><a href="#/admin" class="${tab === 'users' ? 'on' : ''}">Usuarios</a><a href="#/admin?tab=mail" class="${tab === 'mail' ? 'on' : ''}">Correo</a></div>`;
+  const tabParam = new URLSearchParams(location.hash.split('?')[1] || '').get('tab');
+  const tab = tabParam === 'mail' ? 'mail' : tabParam === 'auto' ? 'auto' : 'users';
+  const tabs = `<div class="tabs"><a href="#/admin" class="${tab === 'users' ? 'on' : ''}">Usuarios</a><a href="#/admin?tab=auto" class="${tab === 'auto' ? 'on' : ''}">Automatización</a><a href="#/admin?tab=mail" class="${tab === 'mail' ? 'on' : ''}">Correo</a></div>`;
   if (tab === 'mail') return mailAdminView(tabs);
+  if (tab === 'auto') return autoAdminView(tabs);
   const users = await api('/admin/users');
   app.innerHTML = `<div class="pagehead"><div><h2>Administración</h2><span class="muted">Usuarios, roles, departamentos y turnos de almuerzo</span></div></div>${tabs}
     <div class="card"><h3>Usuarios</h3><div class="tscroll"><table class="cards"><tr><th>Nombre</th><th>Correo</th><th>Departamento</th><th>Rol</th><th>Almuerzo (TI)</th><th>Activo</th></tr>
@@ -290,6 +315,76 @@ function profileView() {
       $('#err').textContent = ''; $('#saved').textContent = '✔ Guardado';
     } catch (er) { $('#err').textContent = er.message; $('#saved').textContent = ''; }
   };
+}
+
+// ---------- Administración: Automatización ----------
+const COND = { no_response: 'no tiene primera respuesta', unassigned: 'no tiene responsable', not_resolved: 'no está resuelto' };
+const ACT = { notify: 'avisar al encargado', priority_up: 'subir la prioridad y avisar', reassign: 'reasignar a otro técnico y avisar' };
+async function autoAdminView(tabs) {
+  const st = await api('/admin/automation');
+  const catName = (c) => (c === '*' ? 'Todas las demás categorías' : c);
+  const staffBox = (cat) => `<div class="chips">${st.staff.map((u) => `<label class="chk"><input type="checkbox" data-pool="${esc(cat)}" value="${u.id}" ${(st.pools[cat] || []).includes(u.id) ? 'checked' : ''}> ${esc(u.name)}${u.role === 'admin' ? ' <span class="muted">(admin)</span>' : ''}</label>`).join('') || '<span class="muted">No hay técnicos activos.</span>'}</div>`;
+  const fieldRow = (f = {}) => `<div class="frow"><input class="fl" placeholder="Nombre del campo" value="${esc(f.label || '')}" maxlength="80">
+    <select class="ft"><option value="text" ${f.type === 'text' ? 'selected' : ''}>Texto</option><option value="textarea" ${f.type === 'textarea' ? 'selected' : ''}>Texto largo</option><option value="select" ${f.type === 'select' ? 'selected' : ''}>Lista</option><option value="date" ${f.type === 'date' ? 'selected' : ''}>Fecha</option></select>
+    <input class="fo" placeholder="Opciones separadas por coma" value="${esc((f.options || []).join(', '))}" ${f.type === 'select' ? '' : 'hidden'}>
+    <label class="chk"><input type="checkbox" class="fr" ${f.required ? 'checked' : ''}> Obligatorio</label><button type="button" class="link frm">quitar</button></div>`;
+  app.innerHTML = `<div class="pagehead"><div><h2>Administración</h2><span class="muted">Asignación automática, escalamiento, respuestas rápidas y formularios</span></div></div>${tabs}
+    <div class="err" id="err" role="alert"></div><div class="saved" id="saved" role="status"></div>
+
+    <div class="card"><h3>Asignación automática</h3><p class="muted">Cada ticket nuevo (por web o por correo) se asigna solo a un técnico. Si una categoría no tiene grupo propio se usa el grupo general; si tampoco, todos los técnicos activos.</p>
+      <label>Modo</label><select id="mode"><option value="off" ${st.mode === 'off' ? 'selected' : ''}>Desactivada (asigna TI a mano)</option>
+        <option value="round_robin" ${st.mode === 'round_robin' ? 'selected' : ''}>Por turnos (se reparte uno a cada técnico)</option>
+        <option value="least_load" ${st.mode === 'least_load' ? 'selected' : ''}>Por carga (al que tiene menos tickets abiertos)</option></select>
+      <details style="margin-top:12px"><summary>Quién recibe cada categoría (opcional)</summary>
+        ${st.categories.map((c) => `<div class="poolrow"><b>${esc(catName(c))}</b>${staffBox(c)}</div>`).join('')}
+        <p class="muted">Sin marcar a nadie = la categoría usa el grupo general. Para el grupo general, sin marcar = todos los técnicos.</p></details>
+      <button id="saveAssign">Guardar asignación</button></div>
+
+    <div class="card"><h3>Reglas de escalamiento</h3><p class="muted">Si un ticket abierto cumple la condición durante el tiempo indicado (en horas hábiles), el sistema actúa una sola vez y avisa al encargado de TI y a los correos de <code>NOTIFY_NEW_TO</code>. Solo aplica a tickets creados después de crear la regla.</p>
+      ${st.rules.length ? `<table class="cards"><tr><th>Regla</th><th>Cuando</th><th>Hacer</th><th>Activa</th><th></th></tr>${st.rules.map((r) => `<tr data-rule="${r.id}"><td class="ttl" data-label="Regla">${esc(r.name)}</td>
+        <td data-label="Cuando">${r.priority === '*' ? 'Cualquier ticket' : 'Prioridad ' + esc(r.priority)} ${esc(COND[r.condition])} tras ${r.minutes} min</td><td data-label="Hacer">${esc(ACT[r.action])}</td>
+        <td data-label="Activa"><input type="checkbox" class="ren" ${r.enabled ? 'checked' : ''} aria-label="Activa"></td><td><button class="link rdel">eliminar</button></td></tr>`).join('')}</table>` : '<p class="muted">Aún no hay reglas.</p>'}
+      <form id="ruleForm" class="grid2" style="margin-top:12px"><div><label>Nombre</label><input name="name" required maxlength="80" placeholder="Urgente sin respuesta"></div>
+        <div><label>Prioridad</label><select name="priority"><option value="*">Cualquiera</option>${meta.priorities.map((p) => `<option>${esc(p)}</option>`).join('')}</select></div>
+        <div><label>Condición</label><select name="condition">${Object.entries(COND).map(([k, v]) => `<option value="${k}">Si el ticket ${v}</option>`).join('')}</select></div>
+        <div><label>Tras (minutos hábiles)</label><input name="minutes" type="number" min="1" required value="30"></div>
+        <div><label>Acción</label><select name="action">${Object.entries(ACT).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select></div>
+        <div><button style="margin-top:28px">Agregar regla</button></div></form></div>
+
+    <div class="card"><h3>Respuestas rápidas</h3><p class="muted">Plantillas que TI inserta al comentar. Puedes usar <code>{{nombre}}</code> (del solicitante), <code>{{ticket}}</code> y <code>{{tecnico}}</code>.</p>
+      ${st.templates.map((x) => `<div class="tplrow" data-tpl="${x.id}"><input class="tt" value="${esc(x.title)}" maxlength="80" aria-label="Título"><textarea class="tb" maxlength="3000" aria-label="Texto">${esc(x.body)}</textarea>
+        <div><button class="tsave" type="button">Guardar</button> <button class="link tdel" type="button">eliminar</button></div></div>`).join('')}
+      <form id="tplForm" style="margin-top:12px"><label>Nueva plantilla</label><input name="title" required maxlength="80" placeholder="Título"><textarea name="body" required maxlength="3000" placeholder="Texto de la respuesta"></textarea><button>Agregar plantilla</button></form></div>
+
+    <div class="card"><h3>Formularios por categoría</h3><p class="muted">Campos extra que se piden al crear un ticket de esa categoría (por ejemplo «Alta de usuario»). Una categoría con formulario aparece en la lista al crear tickets.</p>
+      ${Object.entries(st.forms).map(([cat, fields]) => `<details class="formedit" data-cat="${esc(cat)}"><summary>${esc(cat)} <span class="muted">· ${fields.length} campo(s)</span></summary>
+        <div class="frows">${fields.map(fieldRow).join('')}</div><div class="factions"><button type="button" class="ghost fadd">+ Campo</button> <button type="button" class="fsave">Guardar formulario</button> <button type="button" class="link fdel">eliminar formulario</button></div></details>`).join('') || '<p class="muted">Aún no hay formularios.</p>'}
+      <form id="newForm" class="filters" style="margin-top:12px"><input name="category" required minlength="2" maxlength="60" placeholder="Nueva categoría (p. ej. Baja de usuario)"><button>Crear categoría con formulario</button></form></div>`;
+  const ok = (msg) => { $('#err').textContent = ''; $('#saved').textContent = '✔ ' + msg; setTimeout(() => { const el = $('#saved'); if (el) el.textContent = ''; }, 2500); };
+  const fail = (er) => { $('#saved').textContent = ''; $('#err').textContent = er.message; };
+  const go = async (fn, msg) => { try { await fn(); ok(msg); await autoAdminView(tabs); } catch (er) { fail(er); } };
+  $('#saveAssign').onclick = () => go(() => {
+    const pools = {};
+    document.querySelectorAll('input[data-pool]:checked').forEach((c) => (pools[c.dataset.pool] ||= []).push(Number(c.value)));
+    return api('/admin/automation/assign', { method: 'PUT', body: { mode: $('#mode').value, pools } });
+  }, 'Asignación guardada');
+  $('#ruleForm').onsubmit = (e) => { e.preventDefault(); go(() => api('/admin/escalation', { method: 'POST', body: formData(e.target) }), 'Regla creada'); };
+  document.querySelectorAll('.ren').forEach((c) => (c.onchange = () => go(() => api('/admin/escalation/' + c.closest('tr').dataset.rule, { method: 'PATCH', body: { enabled: c.checked } }), 'Regla actualizada')));
+  document.querySelectorAll('.rdel').forEach((b) => (b.onclick = () => confirm('¿Eliminar esta regla?') && go(() => api('/admin/escalation/' + b.closest('tr').dataset.rule, { method: 'DELETE' }), 'Regla eliminada')));
+  $('#tplForm').onsubmit = (e) => { e.preventDefault(); go(() => api('/admin/templates', { method: 'POST', body: formData(e.target) }), 'Plantilla creada'); };
+  document.querySelectorAll('.tsave').forEach((b) => (b.onclick = () => { const r = b.closest('.tplrow'); go(() => api('/admin/templates/' + r.dataset.tpl, { method: 'PATCH', body: { title: r.querySelector('.tt').value, body: r.querySelector('.tb').value } }), 'Plantilla guardada'); }));
+  document.querySelectorAll('.tdel').forEach((b) => (b.onclick = () => confirm('¿Eliminar esta plantilla?') && go(() => api('/admin/templates/' + b.closest('.tplrow').dataset.tpl, { method: 'DELETE' }), 'Plantilla eliminada')));
+  $('#newForm').onsubmit = (e) => { e.preventDefault(); go(() => api('/admin/forms', { method: 'PUT', body: { category: formData(e.target).category, fields: [] } }).then(async () => { meta = await api('/meta'); }), 'Categoría creada: agrega sus campos'); };
+  const wireRow = (row) => { const sel = row.querySelector('.ft'); sel.onchange = () => (row.querySelector('.fo').hidden = sel.value !== 'select'); row.querySelector('.frm').onclick = () => row.remove(); };
+  document.querySelectorAll('.formedit').forEach((d) => {
+    d.querySelectorAll('.frow').forEach(wireRow);
+    d.querySelector('.fadd').onclick = () => { const w = document.createElement('div'); w.innerHTML = fieldRow({ type: 'text' }); const row = w.firstElementChild; d.querySelector('.frows').appendChild(row); wireRow(row); };
+    d.querySelector('.fsave').onclick = () => go(async () => {
+      const fields = [...d.querySelectorAll('.frow')].map((r) => ({ label: r.querySelector('.fl').value, type: r.querySelector('.ft').value, options: r.querySelector('.fo').value, required: r.querySelector('.fr').checked }));
+      await api('/admin/forms', { method: 'PUT', body: { category: d.dataset.cat, fields } }); meta = await api('/meta');
+    }, 'Formulario guardado');
+    d.querySelector('.fdel').onclick = () => confirm('¿Eliminar el formulario y la categoría de la lista? Los tickets existentes no cambian.') && go(async () => { await api('/admin/forms?category=' + encodeURIComponent(d.dataset.cat), { method: 'DELETE' }); meta = await api('/meta'); }, 'Formulario eliminado');
+  });
 }
 
 // ---------- Administración: Correo ----------

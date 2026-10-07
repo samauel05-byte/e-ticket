@@ -149,6 +149,8 @@ function withSla(t, opts = {}) {
     sla_paused: !res && PAUSED.has(t.status),
     sla_response_breached: respUsed > tg.response * HOUR,
     sla_resolve_breached: resUsed > tg.resolve * HOUR,
+    sla_response_used_ms: resp ? null : respUsed,
+    sla_resolve_used_ms: res ? null : resUsed,
     sla_response_used_pct: resp ? null : Math.round((respUsed / (tg.response * HOUR)) * 100),
     sla_resolve_used_pct: res ? null : Math.round((resUsed / (tg.resolve * HOUR)) * 100),
     response_hours: resp ? respUsed / HOUR : null,

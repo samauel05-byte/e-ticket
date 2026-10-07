@@ -30,6 +30,11 @@ Abre http://localhost:3000.
 - **Historial** de cada ticket: quién cambió estado, responsable, prioridad o categoría, y cuándo.
 - **Desactivar usuarios** (Administración → Usuarios → «Activo»): no entran, no reciben tickets ni avisos y se conserva su historial.
 - **Avisos de SLA** por correo: al 80 % del tiempo («por vencer») y cuando se vence, una vez por ticket, al responsable (o a todo TI si nadie lo tomó), al encargado y a `NOTIFY_NEW_TO`.
+- **Automatización** (Administración → Automatización):
+  - *Asignación automática* de cada ticket nuevo (web o correo) por turnos o por carga, con grupos de técnicos por categoría. Viene desactivada.
+  - *Reglas de escalamiento*: si un ticket cumple una condición (sin primera respuesta, sin responsable o sin resolver) durante N minutos hábiles, el sistema avisa al encargado y puede subir la prioridad o reasignarlo. Una vez por ticket y solo para tickets posteriores a la regla.
+  - *Respuestas rápidas*: plantillas con `{{nombre}}`, `{{ticket}}` y `{{tecnico}}` que TI inserta al comentar.
+  - *Formularios por categoría*: campos extra al crear el ticket (viene «Alta de usuario» de ejemplo); la categoría con formulario aparece en la lista.
 - Roles (`Administración → Usuarios`):
   | Rol | Qué puede hacer |
   |---|---|

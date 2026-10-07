@@ -19,6 +19,8 @@ const sla = require('./sla');
 const settings = require('./settings');
 const mailCheck = require('./mailCheck');
 const mailIngest = require('./mailIngest');
+const forms = require('./forms');
+const automation = require('./automation');
 settings.applyToEnv(); // lo guardado en Administración tiene prioridad sobre .env
 const { targets: SLA_TARGETS } = sla;
 
@@ -26,7 +28,7 @@ const ALLOWED_DOMAIN = (process.env.ALLOWED_DOMAIN || 'empresa.com').toLowerCase
 const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || '').toLowerCase();
 const PORT = process.env.PORT || 3000;
 
-const { STATUSES, PRIORITIES, CATEGORIES, resolveCategory, extraCategories, USER_SELECT, getUser, TICKET_SELECT, logEvent, staffEmails, isStaff, createTicket, addComment } = require('./tickets');
+const { STATUSES, PRIORITIES, CATEGORIES, categoryList, ASSIGNABLE, resolveCategory, extraCategories, USER_SELECT, getUser, TICKET_SELECT, logEvent, staffEmails, isStaff, createTicket, addComment } = require('./tickets');
 
 const { UPLOAD_DIR, MAX_MB, MAX_FILES, ALLOWED_EXT, extOf, storedName } = require('./uploads');
 const upload = multer({
@@ -110,7 +112,6 @@ const admin = (req, res, next) =>
 //  admin       TI + administración de usuarios y correo
 const ROLES = ['user', 'leader', 'agent', 'coordinator', 'manager', 'admin'];
 const canViewAll = (u) => ['agent', 'coordinator', 'manager', 'admin'].includes(u.role);
-const ASSIGNABLE = ['agent', 'admin']; // a quienes se les asignan tickets: Tecnología y Administración
 const canReports = (u) => ['coordinator', 'manager', 'admin'].includes(u.role);
 const viewer = (req, res, next) => (canViewAll(req.user) ? next() : res.status(403).json({ error: 'Sin permiso' }));
 const reportsViewer = (req, res, next) => (canReports(req.user) ? next() : res.status(403).json({ error: 'Sin permiso' }));
@@ -128,7 +129,7 @@ app.get('/api/meta', wrap((req, res) => {
   // Sin sesión solo se expone lo mínimo para mostrar el login (la app puede estar en internet)
   if (!req.session.userId) return res.json({ domain: ALLOWED_DOMAIN, imap: imap.enabled(), departments });
   res.json({
-    domain: ALLOWED_DOMAIN, imap: imap.enabled(), sla: sla.config, statuses: STATUSES, priorities: PRIORITIES, categories: CATEGORIES.filter((c) => c !== 'Otro'), extra_categories: extraCategories(),
+    domain: ALLOWED_DOMAIN, imap: imap.enabled(), sla: sla.config, statuses: STATUSES, priorities: PRIORITIES, categories: categoryList(), forms: forms.all(), extra_categories: extraCategories(),
     departments,
   });
 }));
@@ -246,7 +247,9 @@ app.post('/api/tickets', auth, wrap((req, res) => {
   const priority = PRIORITIES.includes(req.body.priority) ? req.body.priority : 'media';
   if (!title || !description || !category)
     return res.status(400).json({ error: 'Título, descripción y categoría son obligatorios (si eliges "Otra", escribe la categoría, de 2 a 60 caracteres)' });
-  const created = createTicket({ requester: req.user, title, description, category, priority });
+  let formData = null;
+  try { formData = forms.validate(category, req.body.form); } catch (e) { return res.status(e.status || 400).json({ error: e.message }); }
+  const created = createTicket({ requester: req.user, title, description, category, priority, formData });
   res.status(201).json(created);
 }));
 
@@ -286,6 +289,8 @@ app.get('/api/tickets/:id', auth, wrap((req, res) => {
   const seeInternal = isStaff(req.user) || req.user.role === 'manager';
   t.comments = db.prepare(`SELECT c.id, c.body, c.created_at, c.internal, u.name AS author, u.role
     FROM comments c JOIN users u ON u.id = c.user_id WHERE c.ticket_id = ? ${seeInternal ? '' : 'AND c.internal = 0'} ORDER BY c.id`).all(t.id);
+  try { t.form = t.form_data ? JSON.parse(t.form_data) : []; } catch { t.form = []; }
+  delete t.form_data;
   t.history = historyOf(t.id);
   t.can_reopen = canReopen(req.user, t);
   t.can_confirm = t.status === 'resuelto' && t.requester_id === req.user.id;
@@ -586,6 +591,102 @@ app.patch('/api/admin/users/:id', auth, admin, wrap((req, res) => {
   res.json(getUser(u.id));
 }));
 
+// ── Automatización (solo administradores): asignación, escalamiento, respuestas rápidas y formularios ──
+const staffPool = () => db.prepare(`SELECT id, name, role FROM users WHERE active = 1 AND role IN ('agent','admin') ORDER BY name`).all();
+const automationState = () => {
+  const pools = {};
+  for (const r of db.prepare('SELECT category, user_id FROM assign_pool').all()) (pools[r.category] ||= []).push(r.user_id);
+  return {
+    mode: automation.mode(), pools, staff: staffPool(), categories: ['*', ...categoryList()],
+    rules: db.prepare('SELECT id, name, enabled, priority, condition, minutes, action, created_at FROM escalation_rules ORDER BY id').all(),
+    templates: db.prepare('SELECT id, title, body FROM reply_templates ORDER BY title').all(),
+    forms: forms.all(),
+  };
+};
+app.get('/api/admin/automation', auth, admin, wrap((req, res) => res.json(automationState())));
+app.put('/api/admin/automation/assign', auth, admin, wrap((req, res) => {
+  const m = req.body.mode;
+  if (!automation.MODES.includes(m)) return res.status(400).json({ error: 'Modo de asignación no válido' });
+  const pools = req.body.pools && typeof req.body.pools === 'object' ? req.body.pools : {};
+  const cats = new Set(['*', ...categoryList(), ...db.prepare('SELECT DISTINCT category FROM assign_pool').all().map((r) => r.category)]);
+  const okIds = new Set(staffPool().map((u) => u.id));
+  db.transaction(() => {
+    automation.cfgSet('assign_mode', m);
+    db.prepare('DELETE FROM assign_pool').run();
+    const ins = db.prepare('INSERT OR IGNORE INTO assign_pool (category, user_id) VALUES (?, ?)');
+    for (const [cat, ids] of Object.entries(pools)) {
+      if (!cats.has(cat) || !Array.isArray(ids)) continue;
+      for (const id of ids) if (okIds.has(Number(id))) ins.run(cat, Number(id));
+    }
+  })();
+  res.json(automationState());
+}));
+
+const ruleFields = (b, cur = {}) => {
+  const name = str(b.name ?? cur.name, 80);
+  const priority = b.priority ?? cur.priority ?? '*';
+  const condition = b.condition ?? cur.condition;
+  const action = b.action ?? cur.action;
+  const minutes = Number(b.minutes ?? cur.minutes);
+  if (!name) return { error: 'Escribe un nombre para la regla' };
+  if (priority !== '*' && !PRIORITIES.includes(priority)) return { error: 'Prioridad no válida' };
+  if (!['no_response', 'unassigned', 'not_resolved'].includes(condition)) return { error: 'Condición no válida' };
+  if (!['notify', 'priority_up', 'reassign'].includes(action)) return { error: 'Acción no válida' };
+  if (!Number.isInteger(minutes) || minutes < 1 || minutes > 100000) return { error: 'Los minutos deben ser un número entero mayor que 0' };
+  return { name, priority, condition, action, minutes };
+};
+app.post('/api/admin/escalation', auth, admin, wrap((req, res) => {
+  const r = ruleFields(req.body);
+  if (r.error) return res.status(400).json({ error: r.error });
+  db.prepare('INSERT INTO escalation_rules (name, priority, condition, minutes, action) VALUES (?,?,?,?,?)').run(r.name, r.priority, r.condition, r.minutes, r.action);
+  res.status(201).json(automationState());
+}));
+app.patch('/api/admin/escalation/:id', auth, admin, wrap((req, res) => {
+  const cur = db.prepare('SELECT * FROM escalation_rules WHERE id = ?').get(Number(req.params.id));
+  if (!cur) return res.status(404).json({ error: 'Regla no encontrada' });
+  const r = ruleFields(req.body, cur);
+  if (r.error) return res.status(400).json({ error: r.error });
+  const enabled = req.body.enabled === undefined ? cur.enabled : req.body.enabled === true || req.body.enabled === 'true' ? 1 : 0;
+  db.prepare('UPDATE escalation_rules SET name=?, priority=?, condition=?, minutes=?, action=?, enabled=? WHERE id=?').run(r.name, r.priority, r.condition, r.minutes, r.action, enabled, cur.id);
+  res.json(automationState());
+}));
+app.delete('/api/admin/escalation/:id', auth, admin, wrap((req, res) => {
+  db.prepare('DELETE FROM escalation_rules WHERE id = ?').run(Number(req.params.id));
+  db.prepare('DELETE FROM escalation_log WHERE rule_id = ?').run(Number(req.params.id));
+  res.json(automationState());
+}));
+
+// Respuestas rápidas: TI las usa al comentar; el administrador las gestiona
+app.get('/api/templates', auth, staff, wrap((req, res) => res.json(db.prepare('SELECT id, title, body FROM reply_templates ORDER BY title').all())));
+app.post('/api/admin/templates', auth, admin, wrap((req, res) => {
+  const title = str(req.body.title, 80), body = str(req.body.body, 3000);
+  if (!title || !body) return res.status(400).json({ error: 'Título y texto son obligatorios' });
+  db.prepare('INSERT INTO reply_templates (title, body) VALUES (?, ?)').run(title, body);
+  res.status(201).json(automationState());
+}));
+app.patch('/api/admin/templates/:id', auth, admin, wrap((req, res) => {
+  const cur = db.prepare('SELECT * FROM reply_templates WHERE id = ?').get(Number(req.params.id));
+  if (!cur) return res.status(404).json({ error: 'Plantilla no encontrada' });
+  const title = str(req.body.title ?? cur.title, 80), body = str(req.body.body ?? cur.body, 3000);
+  if (!title || !body) return res.status(400).json({ error: 'Título y texto son obligatorios' });
+  db.prepare('UPDATE reply_templates SET title = ?, body = ? WHERE id = ?').run(title, body, cur.id);
+  res.json(automationState());
+}));
+app.delete('/api/admin/templates/:id', auth, admin, wrap((req, res) => {
+  db.prepare('DELETE FROM reply_templates WHERE id = ?').run(Number(req.params.id));
+  res.json(automationState());
+}));
+
+// Formularios por categoría (la categoría también queda disponible en la lista al crear tickets)
+app.put('/api/admin/forms', auth, admin, wrap((req, res) => {
+  try { forms.save(req.body.category, req.body.fields || []); } catch (e) { return res.status(400).json({ error: e.message }); }
+  res.json(automationState());
+}));
+app.delete('/api/admin/forms', auth, admin, wrap((req, res) => {
+  if (!forms.remove(req.query.category)) return res.status(404).json({ error: 'Formulario no encontrado' });
+  res.json(automationState());
+}));
+
 // ── Correo: configuración y pruebas de conexión (solo administradores) ──
 const mailState = () => ({ config: settings.publicConfig(), inbox: mailIngest.status(), smtp_enabled: mailer.enabled(), login_enabled: imap.enabled() });
 app.get('/api/admin/mail', auth, admin, wrap((req, res) => res.json(mailState())));
@@ -632,6 +733,7 @@ if (require.main === module)
     console.log(`ETIQUE en http://localhost:${PORT} (dominio permitido: @${ALLOWED_DOMAIN})`);
     mailIngest.start();
     require('./slaAlerts').start(sla.withSla);
+    automation.start(sla.withSla);
     const hm = (a) => a.map((n) => String(n).padStart(2, '0')).join(':');
     console.log(`SLA: ${hm(sla.config.START)}–${hm(sla.config.END)} zona ${sla.config.TZ}`);
     if (!process.env.SLA_TZ && sla.config.TZ === 'UTC')

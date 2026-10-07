@@ -90,7 +90,7 @@ function senderAuth(parsed, requireAuth) {
 
 function ensureUser(address, displayName, c) {
   const existing = T.getUserByEmail(address);
-  if (existing) return existing;
+  if (existing) return existing.active ? existing : null; // cuenta desactivada: se ignora
   // Alta automática solo si el login es con la clave del correo (IMAP): así el usuario podrá entrar después
   if (!imapAuth.enabled()) return null;
   db.prepare("INSERT OR IGNORE INTO departments (name) VALUES ('Sin departamento')").run();

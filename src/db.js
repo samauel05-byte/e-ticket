@@ -84,6 +84,66 @@ if (!/'coordinator'/.test(db.prepare("SELECT sql FROM sqlite_master WHERE type='
   db.pragma('foreign_keys = ON');
 }
 
+// Cuentas desactivables (personas que ya no trabajan en la empresa) y notas internas de TI en los comentarios
+if (!db.prepare('PRAGMA table_info(users)').all().some((c) => c.name === 'active'))
+  db.exec('ALTER TABLE users ADD COLUMN active INTEGER NOT NULL DEFAULT 1');
+if (!db.prepare('PRAGMA table_info(comments)').all().some((c) => c.name === 'internal'))
+  db.exec('ALTER TABLE comments ADD COLUMN internal INTEGER NOT NULL DEFAULT 0');
+
+// Automatización: asignación automática, escalamiento, respuestas rápidas y formularios por categoría
+if (!db.prepare('PRAGMA table_info(users)').all().some((c) => c.name === 'last_assigned_at'))
+  db.exec('ALTER TABLE users ADD COLUMN last_assigned_at TEXT');
+if (!db.prepare('PRAGMA table_info(tickets)').all().some((c) => c.name === 'form_data'))
+  db.exec('ALTER TABLE tickets ADD COLUMN form_data TEXT');
+const tableExists = (n) => Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?").get(n));
+const hadTemplates = tableExists('reply_templates');
+const hadForms = tableExists('category_forms');
+db.exec(`
+CREATE TABLE IF NOT EXISTS automation_config (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS assign_pool (
+  category TEXT NOT NULL,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  PRIMARY KEY (category, user_id)
+);
+CREATE TABLE IF NOT EXISTS escalation_rules (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  priority TEXT NOT NULL DEFAULT '*',
+  condition TEXT NOT NULL CHECK (condition IN ('no_response','unassigned','not_resolved')),
+  minutes INTEGER NOT NULL CHECK (minutes > 0),
+  action TEXT NOT NULL CHECK (action IN ('notify','priority_up','reassign')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS escalation_log (
+  ticket_id INTEGER NOT NULL,
+  rule_id INTEGER NOT NULL,
+  at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (ticket_id, rule_id)
+);
+CREATE TABLE IF NOT EXISTS reply_templates (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  title TEXT NOT NULL,
+  body TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS category_forms (category TEXT PRIMARY KEY, fields TEXT NOT NULL DEFAULT '[]');`);
+if (!hadTemplates) {
+  const ins = db.prepare('INSERT INTO reply_templates (title, body) VALUES (?, ?)');
+  ins.run('Estamos revisando', 'Hola {{nombre}}, recibimos tu solicitud {{ticket}} y ya la estamos revisando. Te avisaremos en cuanto haya novedades.\n\nSaludos,\n{{tecnico}}');
+  ins.run('Necesitamos más información', 'Hola {{nombre}}, para avanzar con {{ticket}} necesitamos algunos datos más:\n\n- \n\nResponde a este mensaje y lo retomamos de inmediato.\n\nSaludos,\n{{tecnico}}');
+  ins.run('Resuelto, ¿puedes confirmar?', 'Hola {{nombre}}, dejamos resuelto {{ticket}}. Por favor confirma en el sistema que todo funciona; si algo sigue fallando, puedes reabrirlo desde el mismo ticket.\n\nSaludos,\n{{tecnico}}');
+}
+if (!hadForms) {
+  db.prepare('INSERT INTO category_forms (category, fields) VALUES (?, ?)').run('Alta de usuario', JSON.stringify([
+    { key: 'nombre_del_nuevo_empleado', label: 'Nombre completo del nuevo empleado', type: 'text', required: true, options: [] },
+    { key: 'cargo', label: 'Cargo', type: 'text', required: true, options: [] },
+    { key: 'fecha_de_ingreso', label: 'Fecha de ingreso', type: 'date', required: true, options: [] },
+    { key: 'equipo', label: 'Equipo que necesita', type: 'select', required: true, options: ['Laptop', 'PC de escritorio', 'Ninguno (usa el suyo)'] },
+    { key: 'accesos', label: 'Sistemas y accesos que necesita', type: 'textarea', required: false, options: [] },
+  ]));
+}
+
 // Solución escrita por TI al resolver, y origen del ticket (web o correo)
 const ticketCols = db.prepare('PRAGMA table_info(tickets)').all().map((c) => c.name);
 if (!ticketCols.includes('resolution')) db.exec('ALTER TABLE tickets ADD COLUMN resolution TEXT');
@@ -98,6 +158,19 @@ db.exec(`CREATE TABLE IF NOT EXISTS ticket_events (
   assignee_id INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_events_ticket ON ticket_events(ticket_id);`);
+// Historial visible: quién hizo el cambio y qué otro cambio se hizo (prioridad, categoría, reapertura…)
+{
+  const cols = db.prepare('PRAGMA table_info(ticket_events)').all().map((c) => c.name);
+  if (!cols.includes('actor_id')) db.exec('ALTER TABLE ticket_events ADD COLUMN actor_id INTEGER');
+  if (!cols.includes('note')) db.exec('ALTER TABLE ticket_events ADD COLUMN note TEXT');
+}
+// Avisos de SLA ya enviados (uno por ticket y tipo)
+db.exec(`CREATE TABLE IF NOT EXISTS sla_alerts (
+  ticket_id INTEGER NOT NULL,
+  kind TEXT NOT NULL,
+  at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (ticket_id, kind)
+)`);
 db.exec(`INSERT INTO ticket_events (ticket_id, at, status, assignee_id)
   SELECT id, created_at, status, assignee_id FROM tickets
   WHERE id NOT IN (SELECT ticket_id FROM ticket_events)`);

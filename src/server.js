@@ -19,6 +19,8 @@ const sla = require('./sla');
 const settings = require('./settings');
 const mailCheck = require('./mailCheck');
 const mailIngest = require('./mailIngest');
+const forms = require('./forms');
+const automation = require('./automation');
 settings.applyToEnv(); // lo guardado en Administración tiene prioridad sobre .env
 const { targets: SLA_TARGETS } = sla;
 
@@ -26,7 +28,7 @@ const ALLOWED_DOMAIN = (process.env.ALLOWED_DOMAIN || 'empresa.com').toLowerCase
 const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || '').toLowerCase();
 const PORT = process.env.PORT || 3000;
 
-const { STATUSES, PRIORITIES, CATEGORIES, resolveCategory, extraCategories, USER_SELECT, getUser, TICKET_SELECT, logEvent, staffEmails, isStaff, createTicket, addComment } = require('./tickets');
+const { STATUSES, PRIORITIES, CATEGORIES, categoryList, ASSIGNABLE, resolveCategory, extraCategories, USER_SELECT, getUser, TICKET_SELECT, logEvent, staffEmails, isStaff, createTicket, addComment } = require('./tickets');
 
 const { UPLOAD_DIR, MAX_MB, MAX_FILES, ALLOWED_EXT, extOf, storedName } = require('./uploads');
 const upload = multer({
@@ -94,6 +96,7 @@ const withSla = (t) => sla.withSla(t, {
 function auth(req, res, next) {
   const u = req.session.userId && getUser(req.session.userId);
   if (!u) return res.status(401).json({ error: 'No autenticado' });
+  if (!u.active) return req.session.destroy(() => res.status(401).json({ error: 'Tu cuenta está desactivada. Contacta a Tecnología.' }));
   req.user = u;
   next();
 }
@@ -109,7 +112,6 @@ const admin = (req, res, next) =>
 //  admin       TI + administración de usuarios y correo
 const ROLES = ['user', 'leader', 'agent', 'coordinator', 'manager', 'admin'];
 const canViewAll = (u) => ['agent', 'coordinator', 'manager', 'admin'].includes(u.role);
-const ASSIGNABLE = ['agent', 'admin']; // a quienes se les asignan tickets: Tecnología y Administración
 const canReports = (u) => ['coordinator', 'manager', 'admin'].includes(u.role);
 const viewer = (req, res, next) => (canViewAll(req.user) ? next() : res.status(403).json({ error: 'Sin permiso' }));
 const reportsViewer = (req, res, next) => (canReports(req.user) ? next() : res.status(403).json({ error: 'Sin permiso' }));
@@ -127,7 +129,7 @@ app.get('/api/meta', wrap((req, res) => {
   // Sin sesión solo se expone lo mínimo para mostrar el login (la app puede estar en internet)
   if (!req.session.userId) return res.json({ domain: ALLOWED_DOMAIN, imap: imap.enabled(), departments });
   res.json({
-    domain: ALLOWED_DOMAIN, imap: imap.enabled(), sla: sla.config, statuses: STATUSES, priorities: PRIORITIES, categories: CATEGORIES.filter((c) => c !== 'Otro'), extra_categories: extraCategories(),
+    domain: ALLOWED_DOMAIN, imap: imap.enabled(), sla: sla.config, statuses: STATUSES, priorities: PRIORITIES, categories: categoryList(), forms: forms.all(), extra_categories: extraCategories(),
     departments,
   });
 }));
@@ -171,11 +173,13 @@ app.post('/api/login', async (req, res) => {
       res.set('Retry-After', String(wait));
       return res.status(429).json({ error: `Demasiados intentos. Intenta de nuevo en ${Math.ceil(wait / 60)} min.` });
     }
-    const row = db.prepare('SELECT id, password_hash FROM users WHERE email = ?').get(email);
+    const row = db.prepare('SELECT id, password_hash, active FROM users WHERE email = ?').get(email);
+    const off = () => res.status(403).json({ error: 'Tu cuenta está desactivada. Contacta a Tecnología.' });
 
     if (!imap.enabled()) {
       if (!row || !bcrypt.compareSync(password, row.password_hash)) return bad();
       limiter.recordSuccess(email);
+      if (!row.active) return off();
       return startSession(req, res, row.id);
     }
 
@@ -183,7 +187,7 @@ app.post('/api/login', async (req, res) => {
     // Si el usuario es nuevo y aún no eligió departamento, se valida antes de pedírselo.
     if (!(await imap.verify(email, password))) return bad();
     limiter.recordSuccess(email);
-    if (row) return startSession(req, res, row.id);
+    if (row) return row.active ? startSession(req, res, row.id) : off();
 
     const departmentId = Number(req.body.department_id);
     if (!departmentId) return res.status(200).json({ needs_department: true });
@@ -243,9 +247,38 @@ app.post('/api/tickets', auth, wrap((req, res) => {
   const priority = PRIORITIES.includes(req.body.priority) ? req.body.priority : 'media';
   if (!title || !description || !category)
     return res.status(400).json({ error: 'Título, descripción y categoría son obligatorios (si eliges "Otra", escribe la categoría, de 2 a 60 caracteres)' });
-  const created = createTicket({ requester: req.user, title, description, category, priority });
+  let formData = null;
+  try { formData = forms.validate(category, req.body.form); } catch (e) { return res.status(e.status || 400).json({ error: e.message }); }
+  const created = createTicket({ requester: req.user, title, description, category, priority, formData });
   res.status(201).json(created);
 }));
+
+const STATUS_ES = { abierto: 'Abierto', en_progreso: 'En progreso', en_espera: 'En espera', resuelto: 'Resuelto', cerrado: 'Cerrado' };
+function historyOf(ticketId) {
+  const rows = db.prepare(`SELECT e.at, e.status, e.assignee_id, e.note, a.name AS actor, s.name AS assignee
+    FROM ticket_events e LEFT JOIN users a ON a.id = e.actor_id LEFT JOIN users s ON s.id = e.assignee_id
+    WHERE e.ticket_id = ? ORDER BY e.id`).all(ticketId);
+  let prev = null;
+  return rows.map((e) => {
+    const parts = [];
+    if (!prev) parts.push('Ticket creado');
+    else {
+      if (e.status !== prev.status) parts.push(`Estado: ${STATUS_ES[prev.status] || prev.status} → ${STATUS_ES[e.status] || e.status}`);
+      if (e.assignee_id !== prev.assignee_id) parts.push(e.assignee_id ? `Asignado a ${e.assignee}` : 'Quedó sin asignar');
+    }
+    if (e.note) parts.push(e.note);
+    prev = e;
+    return { at: e.at, actor: e.actor, text: parts.join(' · ') };
+  }).filter((h) => h.text);
+}
+const REOPEN_DAYS = Number(process.env.REOPEN_DAYS ?? 14); // el solicitante puede reabrir hasta N días después de resolver (0 = sin límite); TI siempre
+function canReopen(u, t) {
+  if (!['resuelto', 'cerrado'].includes(t.status) || u.role === 'manager') return false;
+  if (isStaff(u)) return true;
+  if (t.requester_id !== u.id) return false;
+  if (!REOPEN_DAYS || !t.resolved_at) return true;
+  return Date.now() - new Date(String(t.resolved_at).replace(' ', 'T') + 'Z').getTime() <= REOPEN_DAYS * 86400000;
+}
 
 app.get('/api/tickets/:id', auth, wrap((req, res) => {
   const row = db.prepare(`${TICKET_SELECT} WHERE t.id = ?`).get(Number(req.params.id));
@@ -253,8 +286,14 @@ app.get('/api/tickets/:id', auth, wrap((req, res) => {
   const t = withSla(row);
   t.attachments = db.prepare(`SELECT a.id, a.original_name, a.size, a.created_at, a.user_id, u.name AS author
     FROM attachments a JOIN users u ON u.id = a.user_id WHERE a.ticket_id = ? ORDER BY a.id`).all(t.id);
-  t.comments = db.prepare(`SELECT c.id, c.body, c.created_at, u.name AS author, u.role
-    FROM comments c JOIN users u ON u.id = c.user_id WHERE c.ticket_id = ? ORDER BY c.id`).all(t.id);
+  const seeInternal = isStaff(req.user) || req.user.role === 'manager';
+  t.comments = db.prepare(`SELECT c.id, c.body, c.created_at, c.internal, u.name AS author, u.role
+    FROM comments c JOIN users u ON u.id = c.user_id WHERE c.ticket_id = ? ${seeInternal ? '' : 'AND c.internal = 0'} ORDER BY c.id`).all(t.id);
+  try { t.form = t.form_data ? JSON.parse(t.form_data) : []; } catch { t.form = []; }
+  delete t.form_data;
+  t.history = historyOf(t.id);
+  t.can_reopen = canReopen(req.user, t);
+  t.can_confirm = t.status === 'resuelto' && t.requester_id === req.user.id;
   res.json(t);
 }));
 
@@ -273,7 +312,7 @@ app.patch('/api/tickets/:id', auth, staff, wrap((req, res) => {
     if (req.body.assignee_id === null || req.body.assignee_id === '') assignee = null;
     else {
       const a = getUser(Number(req.body.assignee_id));
-      if (!a || !ASSIGNABLE.includes(a.role)) return res.status(400).json({ error: 'Solo se puede asignar a personal de Tecnología o Administración' });
+      if (!a || !a.active || !ASSIGNABLE.includes(a.role)) return res.status(400).json({ error: 'Solo se puede asignar a personal de Tecnología o Administración' });
       assignee = a.id;
     }
   }
@@ -288,7 +327,10 @@ app.patch('/api/tickets/:id', auth, staff, wrap((req, res) => {
       resolved_at = CASE WHEN ? THEN COALESCE(resolved_at, datetime('now')) ELSE NULL END
       WHERE id=?`)
     .run(status, priority, category, assignee, resolution, firstResp ? 1 : 0, done(status) ? 1 : 0, t.id);
-  if (changed) logEvent.run(t.id, status, assignee);
+  const notes = [];
+  if (priority !== t.priority) notes.push(`Prioridad: ${t.priority} → ${priority}`);
+  if (category !== t.category) notes.push(`Categoría: ${t.category} → ${category}`);
+  if (changed || notes.length) logEvent.run(t.id, status, assignee, req.user.id, notes.join(' · ') || null);
   const updated = withSla(db.prepare(`${TICKET_SELECT} WHERE t.id = ?`).get(t.id));
   if (status !== t.status)
     mailer.notify(updated.requester_email, `Estado: ${status.replace('_', ' ')}`, updated,
@@ -300,12 +342,40 @@ app.patch('/api/tickets/:id', auth, staff, wrap((req, res) => {
   res.json(updated);
 }));
 
+app.post('/api/tickets/:id/reopen', auth, notManager, wrap((req, res) => {
+  const t = db.prepare('SELECT * FROM tickets WHERE id = ?').get(Number(req.params.id));
+  if (!t || !canSee(req.user, t)) return res.status(404).json({ error: 'Ticket no encontrado' });
+  if (!canReopen(req.user, t)) return res.status(403).json({ error: ['resuelto', 'cerrado'].includes(t.status) ? `Ya pasaron más de ${REOPEN_DAYS} días: crea un ticket nuevo` : 'Solo se pueden reabrir tickets resueltos o cerrados' });
+  const reason = str(req.body.reason, 2000);
+  db.prepare("UPDATE tickets SET status = 'abierto', resolved_at = NULL, updated_at = datetime('now') WHERE id = ?").run(t.id);
+  logEvent.run(t.id, 'abierto', t.assignee_id, req.user.id, req.user.id === t.requester_id ? 'Reabierto por el solicitante' : 'Reabierto por TI');
+  if (reason) addComment({ ticket: t, user: req.user, body: `Reabrí el ticket: ${reason}` });
+  else {
+    const full = withSla(db.prepare(`${TICKET_SELECT} WHERE t.id = ?`).get(t.id));
+    const to = req.user.id === t.requester_id ? (t.assignee_id ? getUser(t.assignee_id)?.email : staffEmails(req.user.id)) : full.requester_email;
+    mailer.notify(to, 'Ticket reabierto', full, `${req.user.name} reabrió el ticket.`);
+  }
+  res.json(withSla(db.prepare(`${TICKET_SELECT} WHERE t.id = ?`).get(t.id)));
+}));
+
+// El solicitante confirma que la solución funcionó: el ticket pasa a "cerrado"
+app.post('/api/tickets/:id/confirm', auth, wrap((req, res) => {
+  const t = db.prepare('SELECT * FROM tickets WHERE id = ?').get(Number(req.params.id));
+  if (!t || t.requester_id !== req.user.id) return res.status(404).json({ error: 'Ticket no encontrado' });
+  if (t.status !== 'resuelto') return res.status(400).json({ error: 'Solo se puede confirmar un ticket resuelto' });
+  db.prepare("UPDATE tickets SET status = 'cerrado', updated_at = datetime('now') WHERE id = ?").run(t.id);
+  logEvent.run(t.id, 'cerrado', t.assignee_id, req.user.id, 'Solución confirmada por el solicitante');
+  res.json(withSla(db.prepare(`${TICKET_SELECT} WHERE t.id = ?`).get(t.id)));
+}));
+
 app.post('/api/tickets/:id/comments', auth, notManager, wrap((req, res) => {
   const t = db.prepare('SELECT * FROM tickets WHERE id = ?').get(Number(req.params.id));
   if (!t || !canSee(req.user, t)) return res.status(404).json({ error: 'Ticket no encontrado' });
   const body = str(req.body.body, 5000);
   if (!body) return res.status(400).json({ error: 'El comentario está vacío' });
-  addComment({ ticket: t, user: req.user, body });
+  const internal = req.body.internal === true || req.body.internal === 'true' || req.body.internal === 'on';
+  if (internal && !isStaff(req.user)) return res.status(403).json({ error: 'Solo TI puede dejar notas internas' });
+  addComment({ ticket: t, user: req.user, body, internal });
   res.status(201).json({ ok: true });
 }));
 
@@ -352,7 +422,7 @@ app.delete('/api/attachments/:id', auth, wrap((req, res) => {
 }));
 
 app.get('/api/staff', auth, staff, wrap((req, res) => {
-  res.json(db.prepare(`${USER_SELECT} WHERE u.role IN ('agent','admin') ORDER BY u.name`).all());
+  res.json(db.prepare(`${USER_SELECT} WHERE u.role IN ('agent','admin') AND u.active = 1 ORDER BY u.name`).all());
 }));
 
 app.get('/api/stats', auth, staff, wrap((req, res) => {
@@ -452,7 +522,7 @@ app.get('/api/dashboard', auth, viewer, wrap((req, res) => {
     x.overdue_open = list.filter((t) => !t.resolved_at && (t.sla_response_breached || t.sla_resolve_breached)).length;
     return x;
   };
-  const team = db.prepare(`${USER_SELECT} WHERE u.role IN ('agent','admin') ${own ? 'AND u.id = ?' : ''} ORDER BY u.name`).all(...(own ? [req.user.id] : []))
+  const team = db.prepare(`${USER_SELECT} WHERE u.role IN ('agent','admin') AND u.active = 1 ${own ? 'AND u.id = ?' : ''} ORDER BY u.name`).all(...(own ? [req.user.id] : []))
     .map((u) => ({ id: u.id, email: u.email, role: u.role, ...stat(u.name, rows.filter((t) => t.assignee_id === u.id)) }))
     .sort((a, b) => b.total - a.total || a.name.localeCompare(b.name));
 
@@ -512,8 +582,109 @@ app.patch('/api/admin/users/:id', auth, admin, wrap((req, res) => {
     lunch = req.body.lunch_shift === '' || req.body.lunch_shift === null ? null : String(req.body.lunch_shift);
     if (lunch && !sla.config.LUNCH_SHIFTS[lunch]) return res.status(400).json({ error: 'Turno de almuerzo inválido' });
   }
-  db.prepare('UPDATE users SET name = ?, email = ?, role = ?, department_id = ?, lunch_shift = ? WHERE id = ?').run(name, email, role, dep, lunch, u.id);
+  let active = u.active;
+  if (req.body.active !== undefined) {
+    active = req.body.active === true || req.body.active === 'true' || req.body.active === 1 ? 1 : 0;
+    if (!active && u.id === req.user.id) return res.status(400).json({ error: 'No puedes desactivar tu propia cuenta' });
+  }
+  db.prepare('UPDATE users SET name = ?, email = ?, role = ?, department_id = ?, lunch_shift = ?, active = ? WHERE id = ?').run(name, email, role, dep, lunch, active, u.id);
   res.json(getUser(u.id));
+}));
+
+// ── Automatización (solo administradores): asignación, escalamiento, respuestas rápidas y formularios ──
+const staffPool = () => db.prepare(`SELECT id, name, role FROM users WHERE active = 1 AND role IN ('agent','admin') ORDER BY name`).all();
+const automationState = () => {
+  const pools = {};
+  for (const r of db.prepare('SELECT category, user_id FROM assign_pool').all()) (pools[r.category] ||= []).push(r.user_id);
+  return {
+    mode: automation.mode(), pools, staff: staffPool(), categories: ['*', ...categoryList()],
+    rules: db.prepare('SELECT id, name, enabled, priority, condition, minutes, action, created_at FROM escalation_rules ORDER BY id').all(),
+    templates: db.prepare('SELECT id, title, body FROM reply_templates ORDER BY title').all(),
+    forms: forms.all(),
+  };
+};
+app.get('/api/admin/automation', auth, admin, wrap((req, res) => res.json(automationState())));
+app.put('/api/admin/automation/assign', auth, admin, wrap((req, res) => {
+  const m = req.body.mode;
+  if (!automation.MODES.includes(m)) return res.status(400).json({ error: 'Modo de asignación no válido' });
+  const pools = req.body.pools && typeof req.body.pools === 'object' ? req.body.pools : {};
+  const cats = new Set(['*', ...categoryList(), ...db.prepare('SELECT DISTINCT category FROM assign_pool').all().map((r) => r.category)]);
+  const okIds = new Set(staffPool().map((u) => u.id));
+  db.transaction(() => {
+    automation.cfgSet('assign_mode', m);
+    db.prepare('DELETE FROM assign_pool').run();
+    const ins = db.prepare('INSERT OR IGNORE INTO assign_pool (category, user_id) VALUES (?, ?)');
+    for (const [cat, ids] of Object.entries(pools)) {
+      if (!cats.has(cat) || !Array.isArray(ids)) continue;
+      for (const id of ids) if (okIds.has(Number(id))) ins.run(cat, Number(id));
+    }
+  })();
+  res.json(automationState());
+}));
+
+const ruleFields = (b, cur = {}) => {
+  const name = str(b.name ?? cur.name, 80);
+  const priority = b.priority ?? cur.priority ?? '*';
+  const condition = b.condition ?? cur.condition;
+  const action = b.action ?? cur.action;
+  const minutes = Number(b.minutes ?? cur.minutes);
+  if (!name) return { error: 'Escribe un nombre para la regla' };
+  if (priority !== '*' && !PRIORITIES.includes(priority)) return { error: 'Prioridad no válida' };
+  if (!['no_response', 'unassigned', 'not_resolved'].includes(condition)) return { error: 'Condición no válida' };
+  if (!['notify', 'priority_up', 'reassign'].includes(action)) return { error: 'Acción no válida' };
+  if (!Number.isInteger(minutes) || minutes < 1 || minutes > 100000) return { error: 'Los minutos deben ser un número entero mayor que 0' };
+  return { name, priority, condition, action, minutes };
+};
+app.post('/api/admin/escalation', auth, admin, wrap((req, res) => {
+  const r = ruleFields(req.body);
+  if (r.error) return res.status(400).json({ error: r.error });
+  db.prepare('INSERT INTO escalation_rules (name, priority, condition, minutes, action) VALUES (?,?,?,?,?)').run(r.name, r.priority, r.condition, r.minutes, r.action);
+  res.status(201).json(automationState());
+}));
+app.patch('/api/admin/escalation/:id', auth, admin, wrap((req, res) => {
+  const cur = db.prepare('SELECT * FROM escalation_rules WHERE id = ?').get(Number(req.params.id));
+  if (!cur) return res.status(404).json({ error: 'Regla no encontrada' });
+  const r = ruleFields(req.body, cur);
+  if (r.error) return res.status(400).json({ error: r.error });
+  const enabled = req.body.enabled === undefined ? cur.enabled : req.body.enabled === true || req.body.enabled === 'true' ? 1 : 0;
+  db.prepare('UPDATE escalation_rules SET name=?, priority=?, condition=?, minutes=?, action=?, enabled=? WHERE id=?').run(r.name, r.priority, r.condition, r.minutes, r.action, enabled, cur.id);
+  res.json(automationState());
+}));
+app.delete('/api/admin/escalation/:id', auth, admin, wrap((req, res) => {
+  db.prepare('DELETE FROM escalation_rules WHERE id = ?').run(Number(req.params.id));
+  db.prepare('DELETE FROM escalation_log WHERE rule_id = ?').run(Number(req.params.id));
+  res.json(automationState());
+}));
+
+// Respuestas rápidas: TI las usa al comentar; el administrador las gestiona
+app.get('/api/templates', auth, staff, wrap((req, res) => res.json(db.prepare('SELECT id, title, body FROM reply_templates ORDER BY title').all())));
+app.post('/api/admin/templates', auth, admin, wrap((req, res) => {
+  const title = str(req.body.title, 80), body = str(req.body.body, 3000);
+  if (!title || !body) return res.status(400).json({ error: 'Título y texto son obligatorios' });
+  db.prepare('INSERT INTO reply_templates (title, body) VALUES (?, ?)').run(title, body);
+  res.status(201).json(automationState());
+}));
+app.patch('/api/admin/templates/:id', auth, admin, wrap((req, res) => {
+  const cur = db.prepare('SELECT * FROM reply_templates WHERE id = ?').get(Number(req.params.id));
+  if (!cur) return res.status(404).json({ error: 'Plantilla no encontrada' });
+  const title = str(req.body.title ?? cur.title, 80), body = str(req.body.body ?? cur.body, 3000);
+  if (!title || !body) return res.status(400).json({ error: 'Título y texto son obligatorios' });
+  db.prepare('UPDATE reply_templates SET title = ?, body = ? WHERE id = ?').run(title, body, cur.id);
+  res.json(automationState());
+}));
+app.delete('/api/admin/templates/:id', auth, admin, wrap((req, res) => {
+  db.prepare('DELETE FROM reply_templates WHERE id = ?').run(Number(req.params.id));
+  res.json(automationState());
+}));
+
+// Formularios por categoría (la categoría también queda disponible en la lista al crear tickets)
+app.put('/api/admin/forms', auth, admin, wrap((req, res) => {
+  try { forms.save(req.body.category, req.body.fields || []); } catch (e) { return res.status(400).json({ error: e.message }); }
+  res.json(automationState());
+}));
+app.delete('/api/admin/forms', auth, admin, wrap((req, res) => {
+  if (!forms.remove(req.query.category)) return res.status(404).json({ error: 'Formulario no encontrado' });
+  res.json(automationState());
 }));
 
 // ── Correo: configuración y pruebas de conexión (solo administradores) ──
@@ -561,6 +732,8 @@ if (require.main === module)
     if (ENV_STATUS) (ENV_STATUS.loaded ? console.log : console.warn)(require('./loadEnv').describe(ENV_STATUS));
     console.log(`ETIQUE en http://localhost:${PORT} (dominio permitido: @${ALLOWED_DOMAIN})`);
     mailIngest.start();
+    require('./slaAlerts').start(sla.withSla);
+    automation.start(sla.withSla);
     const hm = (a) => a.map((n) => String(n).padStart(2, '0')).join(':');
     console.log(`SLA: ${hm(sla.config.START)}–${hm(sla.config.END)} zona ${sla.config.TZ}`);
     if (!process.env.SLA_TZ && sla.config.TZ === 'UTC')

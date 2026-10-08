@@ -14,7 +14,7 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -26,7 +26,7 @@ jobs:
     # Vulnerabilidades conocidas en las dependencias que van a producción
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -37,7 +37,7 @@ jobs:
   docker:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Construir imagen
         run: docker build -t eticket:ci .
       - name: Arrancar y comprobar /healthz
@@ -60,7 +60,7 @@ jobs:
     # Docker Compose completo: Caddy (HTTPS) + app + base de datos local en ./data
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -96,7 +96,7 @@ jobs:
     # Ambiente de prueba (docker-compose.test.yml): siembra, login, ticket y aviso por correo en Mailpit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: ./scripts/test-env.sh up
       - name: Login como usuario y crear un ticket
         run: |
@@ -131,7 +131,7 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -159,7 +159,7 @@ jobs:
     # El instalador de un comando para servidores Linux, de punta a punta
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Sintaxis y shellcheck
         run: |
           sh -n scripts/install-server.sh

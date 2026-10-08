@@ -123,4 +123,4 @@ function start(withSla) {
 }
 const stop = () => { if (timer) clearInterval(timer); timer = null; };
 
-module.exports = { MODES, mode, cfgGet, cfgSet, candidates, pick, autoAssign, runEscalations, start, stop };
+module.exports = { escalationRecipients, MODES, mode, cfgGet, cfgSet, candidates, pick, autoAssign, runEscalations, start, stop };

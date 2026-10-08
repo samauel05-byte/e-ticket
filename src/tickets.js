@@ -34,10 +34,11 @@ const getUser = (id) => db.prepare(`${USER_SELECT} WHERE u.id = ?`).get(id);
 const getUserByEmail = (email) => db.prepare(`${USER_SELECT} WHERE u.email = ?`).get(String(email).toLowerCase());
 
 const TICKET_SELECT = `SELECT t.*, r.name AS requester_name, r.email AS requester_email,
-  d.name AS department, a.name AS assignee_name
+  d.name AS department, a.name AS assignee_name, tr.rating AS rating
   FROM tickets t JOIN users r ON r.id = t.requester_id
   JOIN departments d ON d.id = t.department_id
-  LEFT JOIN users a ON a.id = t.assignee_id`;
+  LEFT JOIN users a ON a.id = t.assignee_id
+  LEFT JOIN ticket_ratings tr ON tr.ticket_id = t.id`;
 
 const eventStmt = db.prepare('INSERT INTO ticket_events (ticket_id, status, assignee_id, actor_id, note) VALUES (?,?,?,?,?)');
 const logEvent = { run: (ticketId, status, assignee, actor = null, note = null) => eventStmt.run(ticketId, status, assignee, actor, note) };

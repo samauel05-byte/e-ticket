@@ -171,7 +171,8 @@ function wireCategory(root) {
 
 function newView() {
   app.innerHTML = `<div class="card" style="max-width:720px;margin-inline:auto"><h2>Nuevo ticket</h2><p class="muted">Cuéntanos qué necesitas; TI te responderá por aquí y por correo.</p><form id="f">
-    <label>Asunto</label><input name="title" maxlength="150" required>
+    <label>Asunto</label><input name="title" maxlength="150" required autocomplete="off">
+    <div id="kbsug"></div>
     <div class="grid2"><div>${categoryField('')}</div>
     <div><label>Prioridad</label><select name="priority">${options(meta.priorities, 'media')}</select></div></div>
     <div id="catform"></div>
@@ -181,6 +182,19 @@ function newView() {
     <p class="muted">Se registrará a nombre de ${esc(me.name)} (${esc(me.department)}).</p>
     <button>Enviar ticket</button><div class="err" id="err"></div></form></div>`;
   wireCategory($('#f'));
+  // Mientras escribe el asunto, se sugieren artículos de Ayuda que quizá resuelvan el problema
+  let kbTimer = null;
+  $('#f input[name=title]').addEventListener('input', (e) => {
+    clearTimeout(kbTimer);
+    const v = e.target.value.trim();
+    if (v.length < 4) { $('#kbsug').innerHTML = ''; return; }
+    kbTimer = setTimeout(async () => {
+      try {
+        const r = await api('/kb?limit=3&q=' + encodeURIComponent(v));
+        $('#kbsug').innerHTML = r.articles.length ? `<div class="kbsug"><b>💡 ¿Alguno de estos artículos te sirve?</b>${r.articles.map((a) => `<a href="#/kb/${a.id}" target="_blank" rel="noopener">${esc(a.title)}</a>`).join('')}<span class="muted">Si no resuelven tu problema, sigue con el ticket.</span></div>` : '';
+      } catch { /* sin sugerencias */ }
+    }, 350);
+  });
   // Formulario propio de la categoría (p. ej. "Alta de usuario"): se pinta al elegirla
   const renderForm = () => {
     const def = (meta.forms || {})[$('#f select.cat').value] || [];
@@ -240,7 +254,7 @@ async function detailView(id) {
       <div><label>Asignar a</label><select name="assignee_id"><option value="">Sin asignar</option>${options(staff.map((s) => ({ id: s.id, name: s.name })), t.assignee_id)}</select></div>
       <div style="grid-column:1/-1"><label>Solución <span class="muted">(obligatoria para resolver o cerrar; el usuario la verá)</span></label>
         <textarea name="resolution" placeholder="¿Cómo se resolvió?">${esc(t.resolution || '')}</textarea></div>
-      <div><button style="margin-top:0">Guardar cambios</button><div class="err" id="merr" role="alert"></div></div></form></div>` : ''}
+      <div><button style="margin-top:0">Guardar cambios</button> ${t.resolution ? '<button type="button" id="mkkb" class="ghost" style="margin-top:0">📚 Convertir la solución en artículo de Ayuda</button>' : ''}<div class="err" id="merr" role="alert"></div></div></form></div>` : ''}
     <div class="card"><h3>Adjuntos (${t.attachments.length})</h3>
       ${t.attachments.map((a) => `<div class="attach">📎 <a href="/api/attachments/${a.id}">${esc(a.original_name)}</a>
         <span class="muted">${fmtSize(a.size)} · ${esc(a.author)} · ${esc(a.created_at)} UTC</span>
@@ -251,6 +265,11 @@ async function detailView(id) {
         <div class="head"><strong>${esc(c.author)}</strong>${c.role !== 'user' ? '<span class="tag">TI</span>' : ''}${c.internal ? '<span class="tag note">🔒 Nota interna</span>' : ''} <span class="muted">${esc(c.created_at)} UTC</span></div>
         <div class="body">${esc(c.body)}</div></div></div>`).join('') || '<p class="muted">Aún no hay mensajes.</p>'}</div>
       ${isManager() ? '<p class="muted">Gerencia tiene acceso de solo lectura.</p>' : `<form id="cm">${isStaff() && templates.length ? `<label>Respuesta rápida</label><select id="tpl"><option value="">Elegir una plantilla…</option>${templates.map((x) => `<option value="${x.id}">${esc(x.title)}</option>`).join('')}</select>` : ''}<textarea name="body" required placeholder="Escribe un comentario…"></textarea>${isStaff() ? '<label class="chk"><input type="checkbox" name="internal"> 🔒 Nota interna (solo la ve el equipo de TI, no el solicitante)</label>' : ''}<button>Enviar comentario</button></form>`}</div>
+    ${t.can_rate ? `<div class="card rate"><h3>¿Cómo fue la atención?</h3><p class="muted">Tu opinión nos ayuda a mejorar.</p>
+      <form id="rf2"><div class="starsel" role="radiogroup" aria-label="Calificación">${[1, 2, 3, 4, 5].map((n) => `<button type="button" class="star ${t.rating_detail && t.rating_detail.rating >= n ? 'on' : ''}" data-n="${n}" aria-label="${n} de 5">★</button>`).join('')}</div>
+      <textarea name="comment" maxlength="1000" placeholder="Cuéntanos más (opcional)">${esc(t.rating_detail?.comment || '')}</textarea>
+      <button>${t.rating_detail ? 'Actualizar calificación' : 'Enviar calificación'}</button> <span class="saved" id="rok" role="status"></span><div class="err" id="rerr" role="alert"></div></form></div>`
+      : t.rating_detail && (isStaff() || me.role === 'manager' || me.role === 'leader') ? `<div class="card rate"><h3>Calificación del solicitante</h3><div class="starsview" title="${t.rating_detail.rating} de 5">${stars(t.rating_detail.rating)}</div>${t.rating_detail.comment ? `<p>${esc(t.rating_detail.comment)}</p>` : ''}</div>` : ''}
     <details class="card"><summary>Historial del ticket (${t.history.length})</summary><ul class="history">${t.history.map((h) => `<li><span class="muted">${esc(h.at)} UTC</span> ${esc(h.text)}${h.actor ? ` <span class="muted">· ${esc(h.actor)}</span>` : ''}</li>`).join('')}</ul></details>`;
   if ($('#up')) $('#up').onsubmit = async (e) => {
     e.preventDefault();
@@ -259,6 +278,17 @@ async function detailView(id) {
   document.querySelectorAll('[data-del]').forEach((b) => (b.onclick = async () => {
     if (confirm('¿Eliminar este adjunto?')) { await api('/attachments/' + b.dataset.del, { method: 'DELETE' }); detailView(id); }
   }));
+  if ($('#rf2')) {
+    let chosen = t.rating_detail ? t.rating_detail.rating : 0;
+    const paint = () => document.querySelectorAll('.starsel .star').forEach((b) => b.classList.toggle('on', Number(b.dataset.n) <= chosen));
+    document.querySelectorAll('.starsel .star').forEach((b) => (b.onclick = () => { chosen = Number(b.dataset.n); paint(); }));
+    $('#rf2').onsubmit = async (e) => {
+      e.preventDefault();
+      if (!chosen) { $('#rerr').textContent = 'Elige de 1 a 5 estrellas'; return; }
+      try { await api(`/tickets/${id}/rating`, { method: 'POST', body: { rating: chosen, comment: e.target.comment.value } }); $('#rerr').textContent = ''; $('#rok').textContent = '✔ ¡Gracias por tu opinión!'; }
+      catch (er) { $('#rerr').textContent = er.message; }
+    };
+  }
   if ($('#tpl')) $('#tpl').onchange = (e) => {
     const x = templates.find((q) => String(q.id) === e.target.value);
     if (!x) return;
@@ -272,6 +302,7 @@ async function detailView(id) {
     if (reason === null) return;
     try { await api(`/tickets/${id}/reopen`, { method: 'POST', body: { reason } }); detailView(id); } catch (er) { $('#aerr').textContent = er.message; }
   };
+  if ($('#mkkb')) $('#mkkb').onclick = () => { try { sessionStorage.setItem('kbDraft', JSON.stringify({ title: t.title, body: t.resolution, category: t.category, published: 0 })); } catch { /* sin almacenamiento */ } location.hash = '#/kb/new'; };
   if (isStaff()) wireCategory($('#mgr'));
   if (isStaff()) $('#mgr').onsubmit = async (e) => {
     e.preventDefault();
@@ -310,6 +341,80 @@ async function adminView() {
   $('#dep').onsubmit = async (e) => {
     e.preventDefault();
     try { await api('/admin/departments', { method: 'POST', body: formData(e.target) }); meta = await api('/meta'); adminView(); }
+    catch (er) { $('#err').textContent = er.message; }
+  };
+}
+
+// ---------- Base de conocimiento ----------
+const stars = (n) => '★'.repeat(n) + '☆'.repeat(5 - n);
+// Texto del artículo: se escapa TODO y solo se permiten listas, **negrita** y enlaces https
+function renderBody(text) {
+  const inline = (t) => esc(t).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/(https:\/\/[^\s<]+[^\s<.,;:!?)])/g, '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>');
+  const out = []; let list = null;
+  const close = () => { if (list) { out.push(`</${list}>`); list = null; } };
+  for (const raw of String(text).split(/\r?\n/)) {
+    const line = raw.trimEnd(); let m;
+    if ((m = /^\s*[-•*]\s+(.*)$/.exec(line))) { if (list !== 'ul') { close(); out.push('<ul>'); list = 'ul'; } out.push(`<li>${inline(m[1])}</li>`); }
+    else if ((m = /^\s*\d+[.)]\s+(.*)$/.exec(line))) { if (list !== 'ol') { close(); out.push('<ol>'); list = 'ol'; } out.push(`<li>${inline(m[1])}</li>`); }
+    else if (!line.trim()) close();
+    else { close(); out.push(`<p>${inline(line)}</p>`); }
+  }
+  close();
+  return out.join('');
+}
+async function kbRouter(h) {
+  const m = /^\/kb\/(new|\d+)(\/edit)?/.exec(h);
+  if (!m) return kbView();
+  if (m[1] === 'new') return kbEditView(null);
+  return m[2] ? kbEditView(Number(m[1])) : kbArticleView(Number(m[1]));
+}
+async function kbView() {
+  const params = new URLSearchParams(location.hash.split('?')[1] || '');
+  const q = params.get('q') || '', cat = params.get('category') || '';
+  const r = await api('/kb?' + new URLSearchParams(Object.entries({ q, category: cat }).filter(([, v]) => v)));
+  app.innerHTML = `<div class="pagehead"><div><h2>Ayuda</h2><span class="muted">Soluciones a los problemas más comunes, antes de crear un ticket</span></div>
+      ${isStaff() ? '<a class="btn" href="#/kb/new" style="margin:0">+ Nuevo artículo</a>' : ''}</div>
+    <div class="card"><form id="kf" class="filters"><input name="q" placeholder="¿Qué problema tienes? Ej.: VPN, impresora, contraseña…" value="${esc(q)}" autofocus><button>Buscar</button></form>
+      <div class="chipbar"><a class="btn ghost ${cat ? '' : 'on'}" href="#/kb${q ? '?q=' + encodeURIComponent(q) : ''}">Todos</a>${r.categories.map((c) => `<a class="btn ghost ${cat === c.category ? 'on' : ''}" href="#/kb?${new URLSearchParams({ ...(q ? { q } : {}), category: c.category })}">${esc(c.category)} (${c.n})</a>`).join('')}</div></div>
+    ${r.articles.length ? r.articles.map((a) => `<a class="card kbitem" href="#/kb/${a.id}"><div><strong>${esc(a.title)}</strong>${a.published ? '' : ' <span class="badge b-warn">Borrador</span>'}<div class="muted">${esc(a.category)} · ${a.views} visita(s)${a.helpful || a.not_helpful ? ` · 👍 ${a.helpful}` : ''}</div>
+      <p class="snip">${esc(a.snippet.replace(/\*\*/g, ''))}${a.snippet.length >= 200 ? '…' : ''}</p></div></a>`).join('')
+      : `<div class="card"><p>No encontramos artículos${q ? ` para «${esc(q)}»` : ''}.</p><p class="muted">Si no encuentras la solución, <a href="#/new">crea un ticket</a> y Tecnología te ayudará.</p></div>`}`;
+  $('#kf').onsubmit = (e) => { e.preventDefault(); const v = e.target.q.value.trim(); location.hash = '#/kb' + (v || cat ? '?' + new URLSearchParams({ ...(v ? { q: v } : {}), ...(cat ? { category: cat } : {}) }) : ''); };
+}
+async function kbArticleView(id) {
+  const a = await api('/kb/' + id);
+  app.innerHTML = `<div class="card kbarticle"><a href="#/kb">← Volver a Ayuda</a>
+    <h2 style="margin-top:8px">${esc(a.title)}${a.published ? '' : ' <span class="badge b-warn">Borrador</span>'}</h2>
+    <div class="muted">${esc(a.category)} · actualizado ${esc(a.updated_at)} UTC · ${a.views} visita(s)</div>
+    <div class="kbbody">${renderBody(a.body)}</div>
+    <div class="vote" id="vote"><span>¿Te sirvió este artículo?</span>
+      <button class="ghost ${a.my_vote === 1 ? 'on' : ''}" data-v="1">👍 Sí</button><button class="ghost ${a.my_vote === 0 ? 'on' : ''}" data-v="0">👎 No</button><span class="saved" id="vok" role="status"></span></div>
+    <p class="muted">¿Sigue sin resolverse? <a href="#/new">Crea un ticket</a>.</p>
+    ${isStaff() ? `<div class="factions"><a class="btn ghost" href="#/kb/${a.id}/edit" style="margin:0">Editar</a>${['admin', 'coordinator'].includes(me.role) ? ' <button class="link" id="kdel">eliminar</button>' : ''}</div>` : ''}</div>`;
+  document.querySelectorAll('#vote button').forEach((b) => (b.onclick = async () => {
+    await api(`/kb/${id}/vote`, { method: 'POST', body: { helpful: b.dataset.v === '1' } });
+    document.querySelectorAll('#vote button').forEach((x) => x.classList.toggle('on', x === b));
+    $('#vok').textContent = b.dataset.v === '1' ? '¡Gracias!' : 'Gracias, lo revisaremos.';
+  }));
+  if ($('#kdel')) $('#kdel').onclick = async () => { if (confirm('¿Eliminar este artículo?')) { await api('/kb/' + id, { method: 'DELETE' }); location.hash = '#/kb'; } };
+}
+async function kbEditView(id) {
+  if (!isStaff()) return (location.hash = '#/kb');
+  let a = { title: '', body: '', category: 'General', published: 1 };
+  if (id) a = await api('/kb/' + id);
+  else { try { const d = JSON.parse(sessionStorage.getItem('kbDraft') || 'null'); if (d) { a = { ...a, ...d }; sessionStorage.removeItem('kbDraft'); } } catch { /* sin borrador */ } }
+  const cats = [...new Set([...meta.categories, ...((await api('/kb')).categories.map((c) => c.category))])];
+  app.innerHTML = `<div class="card" style="max-width:820px;margin-inline:auto"><a href="#/kb${id ? '/' + id : ''}">← Cancelar</a><h2 style="margin-top:8px">${id ? 'Editar artículo' : 'Nuevo artículo'}</h2>
+    <form id="ef"><label>Título</label><input name="title" required minlength="3" maxlength="150" value="${esc(a.title)}" placeholder="Ej.: No puedo conectarme a la VPN">
+      <label>Categoría</label><input name="category" list="kcats" maxlength="60" value="${esc(a.category)}"><datalist id="kcats">${cats.map((c) => `<option value="${esc(c)}">`).join('')}</datalist>
+      <label>Contenido <span class="muted">(líneas con - o 1. forman listas; **negrita**; los enlaces https se vuelven clicables)</span></label>
+      <textarea name="body" required minlength="10" maxlength="20000" style="min-height:260px">${esc(a.body)}</textarea>
+      <label class="chk"><input type="checkbox" name="published" ${a.published ? 'checked' : ''}> Publicado (si no, queda como borrador que solo ve TI)</label>
+      <button>Guardar artículo</button><div class="err" id="err" role="alert"></div></form></div>`;
+  $('#ef').onsubmit = async (e) => {
+    e.preventDefault();
+    const b = formData(e.target); b.published = e.target.published.checked;
+    try { const r = await api(id ? '/kb/' + id : '/kb', { method: id ? 'PATCH' : 'POST', body: b }); location.hash = '#/kb/' + (id || r.id); }
     catch (er) { $('#err').textContent = er.message; }
   };
 }
@@ -525,8 +630,8 @@ async function reportsView() {
   const h = (x) => (x == null ? '—' : x + ' h');
   const p = (x) => (x == null ? '—' : x + '%');
   const tbl = (title, rows) => `<details class="card"><summary>${title}</summary><div style="overflow-x:auto"><table>
-    <tr><th></th><th>Total</th><th>Abiertos</th><th>Resueltos</th><th>Resp. prom.</th><th>Resol. prom.</th><th>SLA resp.</th><th>SLA resol.</th></tr>
-    ${rows.map((x) => `<tr><td>${label(x.name)}</td><td>${x.total}</td><td>${x.open}</td><td>${x.resolved}</td><td>${h(x.avg_response_h)}</td><td>${h(x.avg_resolve_h)}</td><td>${p(x.response_sla_pct)}</td><td>${p(x.resolve_sla_pct)}</td></tr>`).join('')}</table></div></details>`;
+    <tr><th></th><th>Total</th><th>Abiertos</th><th>Resueltos</th><th>Resp. prom.</th><th>Resol. prom.</th><th>SLA resp.</th><th>SLA resol.</th><th>Satisf.</th></tr>
+    ${rows.map((x) => `<tr><td>${label(x.name)}</td><td>${x.total}</td><td>${x.open}</td><td>${x.resolved}</td><td>${h(x.avg_response_h)}</td><td>${h(x.avg_resolve_h)}</td><td>${p(x.response_sla_pct)}</td><td>${p(x.resolve_sla_pct)}</td><td>${x.avg_rating == null ? '—' : x.avg_rating + ' ★'}</td></tr>`).join('')}</table></div></details>`;
   const bars = (title, rows, color) => {
     const max = Math.max(1, ...rows.map((x) => x.total));
     return `<div class="card"><h3>${title}</h3><div class="bars">${rows.length ? rows.map((x) => `<div class="bar" title="${esc(x.name)}: ${x.total}">
@@ -541,7 +646,7 @@ async function reportsView() {
       <div><label>Hasta</label><input type="date" name="to" value="${esc(r.to || '')}"></div><button>Aplicar</button></form></div>
     <div class="kpis">
       ${[['Tickets', s.total, ''], ['Abiertos', s.open, ''], ['Resp. promedio', h(s.avg_response_h), ''], ['Resolución prom.', h(s.avg_resolve_h), ''],
-        ['Cumple SLA resp.', p(s.response_sla_pct), ''], ['Cumple SLA resol.', p(s.resolve_sla_pct), ''], ['Abiertos vencidos', r.overdue_open, r.overdue_open ? 'bad' : '']]
+        ['Cumple SLA resp.', p(s.response_sla_pct), ''], ['Cumple SLA resol.', p(s.resolve_sla_pct), ''], ['Satisfacción', s.avg_rating == null ? '—' : s.avg_rating + ' ★', ''], ['Abiertos vencidos', r.overdue_open, r.overdue_open ? 'bad' : '']]
         .map(([k, v, c]) => `<div class="card kpi ${c}"><div class="muted">${k}</div><div class="num">${v}</div></div>`).join('')}</div>
     <div class="charts">${bars('Por estado', r.by_status, sColor)}${bars('Por prioridad', r.by_priority, pColor)}${bars('Por departamento', r.by_department, '')}${bars('Por categoría', r.by_category, 'blue')}</div>
     ${tbl('Detalle por prioridad', r.by_priority)}${tbl('Detalle por departamento', r.by_department)}${tbl('Detalle por categoría', r.by_category)}${tbl('Detalle por responsable', r.by_assignee)}${tbl('Detalle por estado', r.by_status)}
@@ -570,7 +675,8 @@ async function dashboardView() {
     <div class="tnums"><span><b>${t.total}</b> ${t.total === 1 ? 'asignado' : 'asignados'}</span><span><b>${t.resolved}</b> ${t.resolved === 1 ? 'resuelto' : 'resueltos'}</span><span><b>${t.open}</b> ${t.open === 1 ? 'abierto' : 'abiertos'}</span>
       ${t.overdue_open ? `<span class="badge b-sla">${t.overdue_open} ${t.overdue_open === 1 ? 'vencido' : 'vencidos'}</span>` : ''}</div>
     <div class="tmeta"><span>SLA respuesta <b>${p(t.response_sla_pct)}</b></span><span>SLA solución <b>${p(t.resolve_sla_pct)}</b></span>
-      <span>Respuesta prom. <b>${h(t.avg_response_h)}</b></span><span>Solución prom. <b>${h(t.avg_resolve_h)}</b></span></div>
+      <span>Respuesta prom. <b>${h(t.avg_response_h)}</b></span><span>Solución prom. <b>${h(t.avg_resolve_h)}</b></span>
+      <span>Satisfacción <b>${t.avg_rating == null ? '—' : t.avg_rating + ' ★'}</b>${t.rating_count ? ` <span class="muted">(${t.rating_count})</span>` : ''}</span></div>
     ${t.total ? `<a href="#/tickets?assignee_id=${extra === 'unassigned' ? 'none' : t.id}">Ver sus tickets →</a>` : ''}</div>`;
 
   const maxT = Math.max(1, ...d.trend.map((x) => Math.max(x.created, x.resolved)));
@@ -583,7 +689,8 @@ async function dashboardView() {
         <div><b>${s.open}</b><span>Abiertos</span></div><div class="${s.overdue_open ? 'warnb' : ''}"><b>${s.overdue_open}</b><span>Vencidos</span></div></div></section>
     <div class="kpis">
       ${[['Cumple SLA respuesta', p(s.response_sla_pct), tone(s.response_sla_pct)], ['Cumple SLA solución', p(s.resolve_sla_pct), tone(s.resolve_sla_pct)],
-        ['Respuesta promedio', h(s.avg_response_h), ''], ['Solución promedio', h(s.avg_resolve_h), '']]
+        ['Respuesta promedio', h(s.avg_response_h), ''], ['Solución promedio', h(s.avg_resolve_h), ''],
+        ['Satisfacción', s.avg_rating == null ? '—' : s.avg_rating + ' ★', s.avg_rating == null ? '' : s.avg_rating >= 4 ? 'good' : s.avg_rating >= 3 ? 'mid' : 'low']]
         .map(([k, v, c]) => `<div class="card kpi ${c}"><div class="muted">${k}</div><div class="num">${v}</div></div>`).join('')}</div>
     <h3 style="margin:18px 0 10px">${d.scope === 'own' ? 'Mi desempeño' : 'Equipo de Tecnología'}</h3>
     <div class="team">${d.team.map((t) => person(t)).join('') || '<div class="card muted">Aún no hay personal de TI. Asigna el rol en Administración.</div>'}
@@ -607,12 +714,13 @@ async function route() {
   document.body.classList.toggle('login', !me);
   if (me && me.must_2fa && h !== '/profile') { location.hash = '#/profile'; return; }
   if (!me) return authView(h === '/register' ? 'register' : 'login');
-  const cur = h.startsWith('/ticket/') ? 'tickets' : h.split('?')[0].replace('/', '') || 'tickets';
+  const cur = h.startsWith('/ticket/') ? 'tickets' : h.startsWith('/kb') ? 'kb' : h.split('?')[0].replace('/', '') || 'tickets';
   document.querySelectorAll('#nav a').forEach((a) => a.classList.toggle('active', a.dataset.r === cur));
   window.scrollTo(0, 0);
   try {
     if (h.startsWith('/ticket/')) await detailView(h.split('/')[2]);
     else if (h === '/new') newView();
+    else if (h.startsWith('/kb')) await kbRouter(h);
     else if (h === '/profile') profileView();
     else if (h.startsWith('/admin')) await adminView();
     else if (h.startsWith('/reports')) await reportsView();

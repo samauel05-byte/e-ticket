@@ -5,6 +5,7 @@
   "main": "index.js",
   "scripts": {
     "start": "node src/server.js",
+    "security:check": "node scripts/security-check.js",
     "test": "node --test \"test/*.test.js\"",
     "setup": "node scripts/setup.js",
     "backup": "node scripts/backup.js",

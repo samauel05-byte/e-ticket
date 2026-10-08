@@ -117,4 +117,4 @@ function effective(overrides = {}) {
   return cfg;
 }
 
-module.exports = { FIELDS, applyToEnv, save, publicConfig, effective, stored, validate };
+module.exports = { encrypt, decrypt, FIELDS, applyToEnv, save, publicConfig, effective, stored, validate };

@@ -96,7 +96,7 @@ test('remitente nuevo de la empresa: se crea su cuenta (departamento "Sin depart
 test('adjuntos: se guardan los permitidos y se omiten los peligrosos', async () => {
   const r = await ingest.processRaw(mail({
     from: 'ana@empresa.com', subject: 'Error en pantalla', text: 'Adjunto la captura.',
-    attachments: [{ name: 'captura.png', type: 'image/png', content: 'PNGDATA' }, { name: 'virus.exe', content: 'MZ' }, { name: 'informe ñ.txt', type: 'text/plain', content: 'hola' }],
+    attachments: [{ name: 'captura.png', type: 'image/png', content: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]) }, { name: 'virus.exe', content: 'MZ' }, { name: 'falso.pdf', type: 'application/pdf', content: 'MZ esto es un ejecutable renombrado' }, { name: 'informe ñ.txt', type: 'text/plain', content: 'hola' }],
   }));
   assert.equal(r.status, 'ticket');
   const d = (await ana.get('/api/tickets/' + r.ticket_id)).data;

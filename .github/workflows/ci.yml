@@ -22,6 +22,18 @@ jobs:
       - run: npm ci
       - run: npm test
 
+  security:
+    # Vulnerabilidades conocidas en las dependencias que van a producción
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm audit --omit=dev --audit-level=high
+
   docker:
     runs-on: ubuntu-latest
     steps:
@@ -30,7 +42,7 @@ jobs:
         run: docker build -t eticket:ci .
       - name: Arrancar y comprobar /healthz
         run: |
-          docker run -d --name eticket -p 3000:3000 -e SESSION_SECRET=ci-secret -e ALLOWED_DOMAIN=empresa.com eticket:ci
+          docker run -d --name eticket -p 3000:3000 -e SESSION_SECRET="$(openssl rand -hex 32)" -e ALLOWED_DOMAIN=empresa.com eticket:ci
           for i in $(seq 1 20); do
             curl -fsS http://localhost:3000/healthz && exit 0
             sleep 1
@@ -40,6 +52,9 @@ jobs:
       - name: Sin SESSION_SECRET no debe arrancar
         run: |
           if docker run --rm eticket:ci; then echo "debió fallar"; exit 1; fi
+      - name: Con un SESSION_SECRET débil tampoco debe arrancar
+        run: |
+          if docker run --rm -e SESSION_SECRET=cambia-esto eticket:ci; then echo "debió fallar"; exit 1; fi
 
   stack:
     # Docker Compose completo: Caddy (HTTPS) + app + base de datos local en ./data

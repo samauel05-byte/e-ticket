@@ -8,7 +8,7 @@ function boot(env = {}) {
   Object.assign(process.env, {
     DB_PATH: path.join(dir, 'test.db'), UPLOAD_DIR: path.join(dir, 'up'),
     ALLOWED_DOMAIN: 'empresa.com', ADMIN_EMAIL: 'admin@empresa.com', SESSION_SECRET: 'test-secret',
-    SMTP_HOST: '', IMAP_HOST: '', LOGIN_FAIL_DELAY_MS: '0',
+    SMTP_HOST: '', IMAP_HOST: '', LOGIN_FAIL_DELAY_MS: '0', BCRYPT_COST: '4', LIMIT_REGISTER_PER_HOUR: '10000',
   }, env);
   const app = require('../src/server');
   const server = app.listen(0);
@@ -42,7 +42,7 @@ function client(base) {
 
 async function register(base, email, name, department_id = 1) {
   const c = client(base);
-  const r = await c.post('/api/register', { email, name, password: 'password123', department_id });
+  const r = await c.post('/api/register', { email, name, password: 'Segura-2026-ok', department_id });
   if (r.status !== 201) throw new Error('register failed: ' + JSON.stringify(r.data));
   return c;
 }

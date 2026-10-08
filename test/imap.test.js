@@ -33,7 +33,7 @@ test('IMAP: contraseña incorrecta, dominio ajeno y registro local deshabilitado
   const c = client(ctx.base);
   assert.equal((await c.post('/api/login', { email: 'ana@empresa.com', password: 'mala' })).status, 401);
   assert.equal((await c.post('/api/login', { email: 'ana@gmail.com', password: 'secreta123' })).status, 401);
-  assert.equal((await c.post('/api/register', { email: 'ana@empresa.com', name: 'A', password: 'password123', department_id: 1 })).status, 404);
+  assert.equal((await c.post('/api/register', { email: 'ana@empresa.com', name: 'A', password: 'Segura-2026-ok', department_id: 1 })).status, 404);
 });
 
 test('IMAP: primer acceso pide departamento, crea la cuenta y no guarda la contraseña', async () => {

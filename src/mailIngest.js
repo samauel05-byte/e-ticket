@@ -108,7 +108,7 @@ function saveAttachments(parsed, ticketId, userId) {
   const ins = db.prepare('INSERT INTO attachments (ticket_id, user_id, original_name, stored_name, size) VALUES (?,?,?,?,?)');
   for (const a of list) {
     const original = clean(String(a.filename || 'adjunto').replace(/[\\/\r\n]/g, '_'), 200);
-    if (!up.ALLOWED_EXT.has(up.extOf(original)) || !a.content || a.content.length > up.MAX_MB * 1024 * 1024) { c.push(`omitido: ${original}`); continue; }
+    if (!up.ALLOWED_EXT.has(up.extOf(original)) || !a.content || a.content.length > up.MAX_MB * 1024 * 1024 || !up.sniffOk(up.extOf(original), a.content)) { c.push(`omitido: ${original}`); continue; }
     const stored = up.storedName(original);
     fs.writeFileSync(path.join(up.UPLOAD_DIR, stored), a.content);
     ins.run(ticketId, userId, original, stored, a.content.length);

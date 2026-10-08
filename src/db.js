@@ -90,6 +90,15 @@ if (!db.prepare('PRAGMA table_info(users)').all().some((c) => c.name === 'active
 if (!db.prepare('PRAGMA table_info(comments)').all().some((c) => c.name === 'internal'))
   db.exec('ALTER TABLE comments ADD COLUMN internal INTEGER NOT NULL DEFAULT 0');
 
+// Seguridad: sesiones revocables (época), verificación en dos pasos y códigos de recuperación
+for (const [col, ddl] of [
+  ['session_epoch', 'ALTER TABLE users ADD COLUMN session_epoch INTEGER NOT NULL DEFAULT 0'],
+  ['totp_secret', 'ALTER TABLE users ADD COLUMN totp_secret TEXT'],
+  ['totp_enabled', 'ALTER TABLE users ADD COLUMN totp_enabled INTEGER NOT NULL DEFAULT 0'],
+  ['totp_last', 'ALTER TABLE users ADD COLUMN totp_last INTEGER NOT NULL DEFAULT 0'],
+  ['recovery_codes', 'ALTER TABLE users ADD COLUMN recovery_codes TEXT'],
+]) if (!db.prepare('PRAGMA table_info(users)').all().some((c) => c.name === col)) db.exec(ddl);
+
 // Automatización: asignación automática, escalamiento, respuestas rápidas y formularios por categoría
 if (!db.prepare('PRAGMA table_info(users)').all().some((c) => c.name === 'last_assigned_at'))
   db.exec('ALTER TABLE users ADD COLUMN last_assigned_at TEXT');

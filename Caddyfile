@@ -6,6 +6,12 @@
 {$SITE_ADDRESS} {
 	tls {$CADDY_TLS}
 	encode gzip
+	header {
+		-Server
+		X-Frame-Options DENY
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+	}
 	request_body {
 		max_size 60MB
 	}

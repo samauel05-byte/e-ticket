@@ -6,6 +6,15 @@ services:
     # La app no se expone al exterior: solo Caddy (HTTPS) llega a ella.
     expose:
       - "3000"
+    # Endurecimiento del contenedor: sin privilegios extra, sistema de archivos de solo lectura (solo ./data se escribe)
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+    pids_limit: 200
     volumes:
       # Base de datos (SQLite) y adjuntos en una carpeta LOCAL del servidor: ./data
       - ./data:/app/data
@@ -15,6 +24,13 @@ services:
     restart: unless-stopped
     depends_on:
       - eticket
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    pids_limit: 200
     ports:
       - "80:80"
       - "443:443"

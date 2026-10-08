@@ -28,7 +28,7 @@ const extraCategories = () => {
     GROUP BY category ORDER BY COUNT(*) DESC LIMIT 20`).all(...known).map((r) => r.category);
 };
 
-const USER_SELECT = `SELECT u.id, u.email, u.name, u.role, u.lunch_shift, u.active, u.department_id, d.name AS department
+const USER_SELECT = `SELECT u.id, u.email, u.name, u.role, u.lunch_shift, u.active, u.totp_enabled, u.department_id, d.name AS department
   FROM users u JOIN departments d ON d.id = u.department_id`;
 const getUser = (id) => db.prepare(`${USER_SELECT} WHERE u.id = ?`).get(id);
 const getUserByEmail = (email) => db.prepare(`${USER_SELECT} WHERE u.email = ?`).get(String(email).toLowerCase());

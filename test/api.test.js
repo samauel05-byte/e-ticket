@@ -16,7 +16,7 @@ const newTicket = (c, extra = {}) =>
 
 test('registro: solo dominio de la empresa, contraseña mínima y sin duplicados', async () => {
   const c = client(ctx.base);
-  const base = { name: 'X', password: 'password123', department_id: 1 };
+  const base = { name: 'X', password: 'Segura-2026-ok', department_id: 1 };
   assert.equal((await c.post('/api/register', { ...base, email: 'x@gmail.com' })).status, 400);
   assert.equal((await c.post('/api/register', { ...base, email: 'x@empresa.com.evil.com' })).status, 400);
   assert.equal((await c.post('/api/register', { ...base, email: 'x@empresa.com', password: 'corta' })).status, 400);
@@ -33,7 +33,7 @@ test('login: credenciales correctas e incorrectas, y /api/me exige sesión', asy
   assert.equal((await client(ctx.base).get('/api/me')).status, 401);
   const c = client(ctx.base);
   assert.equal((await c.post('/api/login', { email: 'ana@empresa.com', password: 'mala' })).status, 401);
-  const ok = await c.post('/api/login', { email: 'ana@empresa.com', password: 'password123' });
+  const ok = await c.post('/api/login', { email: 'ana@empresa.com', password: 'Segura-2026-ok' });
   assert.equal(ok.status, 200);
   assert.equal((await c.get('/api/me')).data.email, 'ana@empresa.com');
   await c.post('/api/logout');
@@ -45,7 +45,7 @@ test('login: bloqueo temporal tras demasiados intentos fallidos', async () => {
   let last;
   for (let i = 0; i < 9; i++) last = await c.post('/api/login', { email: 'luis@empresa.com', password: 'mala' });
   assert.equal(last.status, 429);
-  const good = await c.post('/api/login', { email: 'luis@empresa.com', password: 'password123' });
+  const good = await c.post('/api/login', { email: 'luis@empresa.com', password: 'Segura-2026-ok' });
   assert.equal(good.status, 429); // sigue bloqueado aunque la contraseña sea correcta
 });
 

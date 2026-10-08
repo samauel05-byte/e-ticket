@@ -17,11 +17,11 @@ const login = (c, email, password, ip = '203.0.113.9') =>
 test('límite por IP: tras N fallos se bloquea a esa IP aunque cambie de correo o acierte', async () => {
   const c = client(ctx.base);
   for (let i = 0; i < 5; i++) assert.equal((await login(c, `x${i}@empresa.com`, 'mala', '198.51.100.7')).status, 401);
-  const blocked = await login(c, 'ana@empresa.com', 'password123', '198.51.100.7'); // credenciales correctas
+  const blocked = await login(c, 'ana@empresa.com', 'Segura-2026-ok', '198.51.100.7'); // credenciales correctas
   assert.equal(blocked.status, 429);
   assert.ok(Number(blocked.headers.get('retry-after')) > 0);
   // otra IP no se ve afectada
-  assert.equal((await login(client(ctx.base), 'ana@empresa.com', 'password123', '198.51.100.8')).status, 200);
+  assert.equal((await login(client(ctx.base), 'ana@empresa.com', 'Segura-2026-ok', '198.51.100.8')).status, 200);
 });
 
 test('el bloqueo se guarda en la base de datos (sobrevive a reinicios)', () => {
@@ -35,7 +35,7 @@ test('un login correcto reinicia el contador del correo pero no el de la IP', as
   const ip = '198.51.100.20';
   await login(client(ctx.base), 'ana@empresa.com', 'mala', ip);
   assert.equal(db.prepare("SELECT n FROM login_attempts WHERE key = 'email:ana@empresa.com'").get().n >= 1, true);
-  assert.equal((await login(client(ctx.base), 'ana@empresa.com', 'password123', ip)).status, 200);
+  assert.equal((await login(client(ctx.base), 'ana@empresa.com', 'Segura-2026-ok', ip)).status, 200);
   assert.equal(db.prepare("SELECT n FROM login_attempts WHERE key = 'email:ana@empresa.com'").get(), undefined);
   assert.equal(db.prepare(`SELECT n FROM login_attempts WHERE key = 'ip:${ip}'`).get().n, 1);
 });
@@ -44,14 +44,14 @@ test('/api/meta sin sesión expone solo lo mínimo; con sesión, todo', async ()
   const anon = (await client(ctx.base).get('/api/meta')).data;
   assert.deepEqual(Object.keys(anon).sort(), ['departments', 'domain', 'imap']);
   const c = client(ctx.base);
-  await login(c, 'ana@empresa.com', 'password123', '198.51.100.30');
+  await login(c, 'ana@empresa.com', 'Segura-2026-ok', '198.51.100.30');
   const full = (await c.get('/api/meta')).data;
   assert.ok(full.statuses && full.sla && full.categories);
 });
 
 test('INTERNAL_CIDRS: Administración y Reportes solo desde la red interna; Tickets desde cualquier IP', async () => {
   const c = client(ctx.base);
-  await login(c, 'admin@empresa.com', 'password123', '198.51.100.40');
+  await login(c, 'admin@empresa.com', 'Segura-2026-ok', '198.51.100.40');
   const from = (ip) => ({ 'X-Forwarded-For': ip });
   assert.equal((await c.get('/api/admin/users', from('8.8.8.8'))).status, 403);
   assert.equal((await c.get('/api/reports', from('8.8.8.8'))).status, 403);

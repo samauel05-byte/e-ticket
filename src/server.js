@@ -21,6 +21,11 @@ const mailCheck = require('./mailCheck');
 const mailIngest = require('./mailIngest');
 const forms = require('./forms');
 const automation = require('./automation');
+const audit = require('./audit');
+const limits = require('./limits');
+const totp = require('./totp');
+const passwords = require('./passwords');
+const securityCheck = require('./securityCheck');
 settings.applyToEnv(); // lo guardado en Administración tiene prioridad sobre .env
 const { targets: SLA_TARGETS } = sla;
 
@@ -30,7 +35,7 @@ const PORT = process.env.PORT || 3000;
 
 const { STATUSES, PRIORITIES, CATEGORIES, categoryList, ASSIGNABLE, resolveCategory, extraCategories, USER_SELECT, getUser, TICKET_SELECT, logEvent, staffEmails, isStaff, createTicket, addComment } = require('./tickets');
 
-const { UPLOAD_DIR, MAX_MB, MAX_FILES, ALLOWED_EXT, extOf, storedName } = require('./uploads');
+const { UPLOAD_DIR, MAX_MB, MAX_FILES, ALLOWED_EXT, extOf, storedName, sniffFile } = require('./uploads');
 const upload = multer({
   storage: multer.diskStorage({
     destination: UPLOAD_DIR,
@@ -54,9 +59,31 @@ if (process.env.NODE_ENV === 'production' && !process.env.SESSION_SECRET) {
   console.error('Falta SESSION_SECRET (obligatorio en producción)');
   process.exit(1);
 }
-// CSP por defecto de helmet; sin HSTS forzado porque depende del proxy HTTPS
-app.use(helmet({ strictTransportSecurity: process.env.COOKIE_SECURE === 'true' }));
+if (process.env.NODE_ENV === 'production' && securityCheck.weakSecret(process.env.SESSION_SECRET)) {
+  console.error('SESSION_SECRET es demasiado débil o es el valor de ejemplo. Genera uno nuevo: openssl rand -hex 32');
+  process.exit(1);
+}
+// Cabeceras de seguridad. HSTS solo con HTTPS (COOKIE_SECURE=true). La interfaz usa estilos en línea, pero ningún script en línea.
+const HTTPS = process.env.COOKIE_SECURE === 'true';
+app.use(helmet({
+  strictTransportSecurity: HTTPS ? { maxAge: 31536000, includeSubDomains: true } : false,
+  contentSecurityPolicy: {
+    useDefaults: false,
+    directives: {
+      'default-src': ["'self'"], 'script-src': ["'self'"], 'style-src': ["'self'", "'unsafe-inline'"], 'img-src': ["'self'", 'data:'],
+      'font-src': ["'self'"], 'connect-src': ["'self'"], 'object-src': ["'none'"], 'frame-ancestors': ["'none'"], 'base-uri': ["'self'"],
+      'form-action': ["'self'"], ...(HTTPS ? { 'upgrade-insecure-requests': [] } : {}),
+    },
+  },
+  referrerPolicy: { policy: 'no-referrer' },
+  crossOriginResourcePolicy: { policy: 'same-origin' },
+  crossOriginOpenerPolicy: { policy: 'same-origin' },
+}));
+app.use((req, res, next) => { res.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()'); next(); });
+// Las respuestas de la API nunca se guardan en caché (equipos compartidos, proxys)
+app.use('/api', (req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
 app.use(express.json({ limit: '100kb' }));
+app.use('/api', limits.middleware('api')); // tope de peticiones por IP
 
 // Anti-CSRF: en peticiones que modifican datos, si el navegador envía Origin debe ser el mismo host.
 app.use('/api', (req, res, next) => {
@@ -70,12 +97,16 @@ app.use('/api', (req, res, next) => {
   next();
 });
 
+const IDLE_MS = (Number(process.env.SESSION_IDLE_MIN) > 0 ? Number(process.env.SESSION_IDLE_MIN) : 120) * 60 * 1000;      // inactividad
+const MAX_MS = (Number(process.env.SESSION_MAX_HOURS) > 0 ? Number(process.env.SESSION_MAX_HOURS) : 12) * 3600 * 1000;      // duración máxima
 app.use(session({
+  name: HTTPS ? '__Host-eticket.sid' : 'eticket.sid',
   store: new SqliteStore(db),
   secret: process.env.SESSION_SECRET || 'cambia-este-secreto-en-produccion',
   resave: false,
   saveUninitialized: false,
-  cookie: { httpOnly: true, sameSite: 'lax', maxAge: 8 * 60 * 60 * 1000, secure: process.env.COOKIE_SECURE === 'true' },
+  rolling: true,
+  cookie: { httpOnly: true, sameSite: 'strict', maxAge: IDLE_MS, secure: HTTPS, path: '/' },
 }));
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
@@ -93,10 +124,21 @@ const withSla = (t) => sla.withSla(t, {
   lunchFor: (uid) => (uid ? lunchStmt.get(uid)?.lunch_shift : null),
 });
 
+const epochStmt = db.prepare('SELECT session_epoch FROM users WHERE id = ?');
+const bumpEpoch = (id) => db.prepare('UPDATE users SET session_epoch = session_epoch + 1 WHERE id = ?').run(id); // cierra todas las sesiones de esa persona
+// Roles que deben usar verificación en dos pasos (REQUIRE_2FA_ROLES="admin,coordinator")
+const REQUIRE_2FA = String(process.env.REQUIRE_2FA_ROLES || '').split(',').map((r) => r.trim()).filter(Boolean);
+const must2fa = (u) => REQUIRE_2FA.includes(u.role) && !u.totp_enabled;
+const OPEN_WHEN_2FA_PENDING = /^\/api\/(me|logout|me\/2fa\/.*)$/;
+
 function auth(req, res, next) {
   const u = req.session.userId && getUser(req.session.userId);
   if (!u) return res.status(401).json({ error: 'No autenticado' });
   if (!u.active) return req.session.destroy(() => res.status(401).json({ error: 'Tu cuenta está desactivada. Contacta a Tecnología.' }));
+  if ((req.session.epoch ?? 0) !== epochStmt.get(u.id).session_epoch || Date.now() - (req.session.createdAt || 0) > MAX_MS)
+    return req.session.destroy(() => res.status(401).json({ error: 'Tu sesión terminó. Entra de nuevo.' }));
+  if (must2fa(u) && !OPEN_WHEN_2FA_PENDING.test(req.path))
+    return res.status(403).json({ error: 'Tu rol exige la verificación en dos pasos: actívala en Mi perfil para continuar.', code: '2fa_required' });
   req.user = u;
   next();
 }
@@ -134,7 +176,7 @@ app.get('/api/meta', wrap((req, res) => {
   });
 }));
 
-app.post('/api/register', wrap((req, res) => {
+app.post('/api/register', limits.middleware('register'), wrap((req, res) => {
   if (imap.enabled()) return res.status(404).json({ error: 'Registro deshabilitado: usa tu correo de la empresa para entrar' });
   const email = str(req.body.email, 200).toLowerCase();
   const name = str(req.body.name, 100);
@@ -143,38 +185,49 @@ app.post('/api/register', wrap((req, res) => {
   if (!/^[^@\s]+@[^@\s]+$/.test(email) || !email.endsWith('@' + ALLOWED_DOMAIN))
     return res.status(400).json({ error: `Solo se permiten correos @${ALLOWED_DOMAIN}` });
   if (!name) return res.status(400).json({ error: 'El nombre es obligatorio' });
-  if (password.length < 8) return res.status(400).json({ error: 'La contraseña debe tener al menos 8 caracteres' });
+  const weak = passwords.check(password, email);
+  if (weak) return res.status(400).json({ error: weak });
   if (!db.prepare('SELECT 1 FROM departments WHERE id = ?').get(departmentId))
     return res.status(400).json({ error: 'Departamento inválido' });
   if (db.prepare('SELECT 1 FROM users WHERE email = ?').get(email))
     return res.status(409).json({ error: 'Ese correo ya está registrado' });
   const role = email === ADMIN_EMAIL ? 'admin' : 'user';
   const info = db.prepare('INSERT INTO users (email, name, password_hash, department_id, role) VALUES (?,?,?,?,?)')
-    .run(email, name, bcrypt.hashSync(password, 10), departmentId, role);
+    .run(email, name, passwords.hash(password), departmentId, role);
+  audit.log(req, 'user.register', email, `rol ${role}`, { id: info.lastInsertRowid, email });
   req.session.regenerate(() => {
-    req.session.userId = info.lastInsertRowid;
-    res.status(201).json(getUser(info.lastInsertRowid));
+    req.session.userId = info.lastInsertRowid; req.session.epoch = 0; req.session.createdAt = Date.now();
+    res.status(201).json(meView(getUser(info.lastInsertRowid)));
   });
 }));
 
-const startSession = (req, res, id) => req.session.regenerate(() => {
-  req.session.userId = id;
-  res.json(getUser(id));
-});
+const startSession = (req, res, id, how = 'login') => {
+  const user = getUser(id);
+  const epoch = epochStmt.get(id).session_epoch;
+  // Con verificación en dos pasos activa, la sesión queda "pendiente" hasta que se escriba el código
+  if (user.totp_enabled && how === 'login')
+    return req.session.regenerate(() => { req.session.pending2fa = { id, at: Date.now() }; res.json({ needs_2fa: true }); });
+  req.session.regenerate(() => {
+    req.session.userId = id; req.session.epoch = epoch; req.session.createdAt = Date.now();
+    audit.log(req, 'login.ok', user.email, how === 'login' ? null : how, user);
+    res.json(meView(getUser(id)));
+  });
+};
 
 app.post('/api/login', async (req, res) => {
   try {
     const email = str(req.body.email, 200).toLowerCase();
     const password = typeof req.body.password === 'string' ? req.body.password : '';
     const ip = req.ip;
-    const bad = async () => { await limiter.recordFailure(ip, email); return res.status(401).json({ error: 'Correo o contraseña incorrectos' }); };
+    const bad = async () => { audit.log(req, 'login.fail', email); await limiter.recordFailure(ip, email); return res.status(401).json({ error: 'Correo o contraseña incorrectos' }); };
     const wait = limiter.blockedFor(ip, email);
     if (wait) {
       res.set('Retry-After', String(wait));
+      audit.log(req, 'login.blocked', email, `${wait} s`);
       return res.status(429).json({ error: `Demasiados intentos. Intenta de nuevo en ${Math.ceil(wait / 60)} min.` });
     }
     const row = db.prepare('SELECT id, password_hash, active FROM users WHERE email = ?').get(email);
-    const off = () => res.status(403).json({ error: 'Tu cuenta está desactivada. Contacta a Tecnología.' });
+    const off = () => { audit.log(req, 'login.disabled', email); return res.status(403).json({ error: 'Tu cuenta está desactivada. Contacta a Tecnología.' }); };
 
     if (!imap.enabled()) {
       if (!row || !bcrypt.compareSync(password, row.password_hash)) return bad();
@@ -205,8 +258,79 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
-app.post('/api/logout', (req, res) => req.session.destroy(() => res.json({ ok: true })));
-app.get('/api/me', auth, (req, res) => res.json(req.user));
+app.post('/api/logout', (req, res) => { if (req.session.userId) audit.log(req, 'logout', null, null, getUser(req.session.userId)); req.session.destroy(() => res.json({ ok: true })); });
+const meView = (u) => ({ ...u, must_2fa: must2fa(u), local_password: !String(db.prepare('SELECT password_hash FROM users WHERE id = ?').get(u.id).password_hash).startsWith('!') });
+app.get('/api/me', auth, (req, res) => res.json(meView(req.user)));
+const refreshEpoch = (req) => { req.session.epoch = epochStmt.get(req.user.id).session_epoch; };
+
+// ── Verificación en dos pasos (TOTP) ──
+app.post('/api/login/2fa', wrap(async (req, res) => {
+  const p = req.session.pending2fa;
+  if (!p || Date.now() - p.at > 5 * 60 * 1000) return res.status(401).json({ error: 'El inicio de sesión expiró. Vuelve a escribir tu correo y contraseña.' });
+  const row = db.prepare('SELECT id, email, active, totp_secret, totp_last, recovery_codes FROM users WHERE id = ?').get(p.id);
+  const wait = limiter.blockedFor(req.ip, row.email);
+  if (wait) { res.set('Retry-After', String(wait)); return res.status(429).json({ error: `Demasiados intentos. Intenta de nuevo en ${Math.ceil(wait / 60)} min.` }); }
+  const code = str(req.body.code, 40);
+  let how = null;
+  const secret = row.totp_secret ? settings.decrypt(row.totp_secret) : null;
+  const counter = secret ? totp.verify(secret, code) : null;
+  if (counter && counter > row.totp_last) { db.prepare('UPDATE users SET totp_last = ? WHERE id = ?').run(counter, row.id); how = '2fa'; } // un código no se puede reutilizar
+  else {
+    const hashes = JSON.parse(row.recovery_codes || '[]'); const i = hashes.indexOf(totp.hashCode(code));
+    if (i >= 0) { hashes.splice(i, 1); db.prepare('UPDATE users SET recovery_codes = ? WHERE id = ?').run(JSON.stringify(hashes), row.id); how = '2fa (código de recuperación)'; }
+  }
+  if (!how || !row.active) { audit.log(req, 'login.2fa_fail', row.email); await limiter.recordFailure(req.ip, row.email); return res.status(401).json({ error: 'Código incorrecto' }); }
+  limiter.recordSuccess(row.email);
+  startSession(req, res, row.id, how);
+}));
+
+app.post('/api/me/2fa/setup', auth, wrap((req, res) => {
+  if (req.user.totp_enabled) return res.status(400).json({ error: 'La verificación en dos pasos ya está activada' });
+  const secret = totp.newSecret();
+  db.prepare('UPDATE users SET totp_secret = ?, totp_enabled = 0 WHERE id = ?').run(settings.encrypt(secret), req.user.id);
+  res.json({ secret, uri: totp.uri(secret, req.user.email) });
+}));
+app.post('/api/me/2fa/enable', auth, wrap((req, res) => {
+  const row = db.prepare('SELECT totp_secret, totp_enabled FROM users WHERE id = ?').get(req.user.id);
+  if (row.totp_enabled || !row.totp_secret) return res.status(400).json({ error: 'Primero genera la clave (paso 1)' });
+  const secret = settings.decrypt(row.totp_secret);
+  const counter = secret ? totp.verify(secret, req.body.code) : null;
+  if (!counter) return res.status(400).json({ error: 'Código incorrecto. Revisa la hora de tu teléfono e inténtalo de nuevo.' });
+  const codes = totp.newRecoveryCodes();
+  db.prepare('UPDATE users SET totp_enabled = 1, totp_last = ?, recovery_codes = ? WHERE id = ?').run(counter, JSON.stringify(codes.map(totp.hashCode)), req.user.id);
+  bumpEpoch(req.user.id); refreshEpoch(req); // cierra las demás sesiones abiertas
+  audit.log(req, '2fa.enable', req.user.email);
+  res.json({ ok: true, recovery_codes: codes });
+}));
+app.post('/api/me/2fa/disable', auth, wrap((req, res) => {
+  if (REQUIRE_2FA.includes(req.user.role)) return res.status(403).json({ error: 'Tu rol exige la verificación en dos pasos: no se puede desactivar.' });
+  const row = db.prepare('SELECT totp_secret, totp_last, recovery_codes FROM users WHERE id = ?').get(req.user.id);
+  const secret = row.totp_secret ? settings.decrypt(row.totp_secret) : null;
+  const counter = secret ? totp.verify(secret, req.body.code) : null;
+  const rec = JSON.parse(row.recovery_codes || '[]').includes(totp.hashCode(req.body.code || ''));
+  if (!(counter && counter > row.totp_last) && !rec) { audit.log(req, '2fa.disable_fail', req.user.email); return res.status(400).json({ error: 'Código incorrecto' }); }
+  db.prepare('UPDATE users SET totp_enabled = 0, totp_secret = NULL, recovery_codes = NULL, totp_last = 0 WHERE id = ?').run(req.user.id);
+  bumpEpoch(req.user.id); refreshEpoch(req);
+  audit.log(req, '2fa.disable', req.user.email);
+  res.json({ ok: true });
+}));
+
+// Cambiar la contraseña propia (solo cuentas con contraseña del sistema; con el login por correo se cambia en el correo)
+app.post('/api/me/password', auth, wrap(async (req, res) => {
+  const row = db.prepare('SELECT password_hash FROM users WHERE id = ?').get(req.user.id);
+  if (String(row.password_hash).startsWith('!')) return res.status(400).json({ error: 'Tu cuenta usa la contraseña de tu correo: cámbiala allí.' });
+  const wait = limiter.blockedFor(req.ip, req.user.email);
+  if (wait) { res.set('Retry-After', String(wait)); return res.status(429).json({ error: `Demasiados intentos. Intenta de nuevo en ${Math.ceil(wait / 60)} min.` }); }
+  if (!bcrypt.compareSync(String(req.body.current || ''), row.password_hash)) { audit.log(req, 'password.fail', req.user.email); await limiter.recordFailure(req.ip, req.user.email); return res.status(403).json({ error: 'La contraseña actual no es correcta' }); }
+  const next = String(req.body.next || '');
+  const weak = passwords.check(next, req.user.email);
+  if (weak) return res.status(400).json({ error: weak });
+  if (bcrypt.compareSync(next, row.password_hash)) return res.status(400).json({ error: 'La contraseña nueva debe ser distinta de la actual' });
+  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(passwords.hash(next), req.user.id);
+  bumpEpoch(req.user.id); refreshEpoch(req); // cierra las demás sesiones
+  audit.log(req, 'password.change', req.user.email);
+  res.json({ ok: true });
+}));
 // Cada persona edita su propio nombre y departamento (el correo y el rol los cambia un administrador)
 app.patch('/api/me', auth, wrap((req, res) => {
   const name = str(req.body.name ?? req.user.name, 100);
@@ -217,7 +341,7 @@ app.patch('/api/me', auth, wrap((req, res) => {
     if (!db.prepare('SELECT 1 FROM departments WHERE id = ?').get(dep)) return res.status(400).json({ error: 'Departamento no válido' });
   }
   db.prepare('UPDATE users SET name = ?, department_id = ? WHERE id = ?').run(name, dep, req.user.id);
-  res.json(getUser(req.user.id));
+  res.json(meView(getUser(req.user.id)));
 }));
 
 // ---------- Tickets ----------
@@ -240,7 +364,7 @@ app.get('/api/tickets', auth, wrap((req, res) => {
   res.json(db.prepare(sql).all(...args).map((t) => withSla(t)));
 }));
 
-app.post('/api/tickets', auth, wrap((req, res) => {
+app.post('/api/tickets', auth, limits.middleware('ticket', 'user'), wrap((req, res) => {
   const title = str(req.body.title, 150);
   const description = str(req.body.description, 5000);
   const category = resolveCategory(req.body.category, req.body.category_other);
@@ -368,7 +492,7 @@ app.post('/api/tickets/:id/confirm', auth, wrap((req, res) => {
   res.json(withSla(db.prepare(`${TICKET_SELECT} WHERE t.id = ?`).get(t.id)));
 }));
 
-app.post('/api/tickets/:id/comments', auth, notManager, wrap((req, res) => {
+app.post('/api/tickets/:id/comments', auth, notManager, limits.middleware('comment', 'user'), wrap((req, res) => {
   const t = db.prepare('SELECT * FROM tickets WHERE id = ?').get(Number(req.params.id));
   if (!t || !canSee(req.user, t)) return res.status(404).json({ error: 'Ticket no encontrado' });
   const body = str(req.body.body, 5000);
@@ -388,8 +512,11 @@ const loadTicket = (req, res, next) => {
 };
 const rmFiles = (files) => (files || []).forEach((f) => fs.unlink(f.path, () => {}));
 
-app.post('/api/tickets/:id/attachments', auth, notManager, loadTicket, upload.array('files', 5), wrap((req, res) => {
+app.post('/api/tickets/:id/attachments', auth, notManager, loadTicket, limits.middleware('upload', 'user'), upload.array('files', 5), wrap((req, res) => {
   if (!req.files || !req.files.length) return res.status(400).json({ error: 'No se recibió ningún archivo' });
+  // El contenido real debe corresponder a la extensión (un .exe o .html renombrado como .pdf se rechaza)
+  const fake = req.files.filter((f) => !sniffFile(f.path, extOf(f.originalname)));
+  if (fake.length) { rmFiles(req.files); audit.log(req, 'upload.rejected', `ticket #${req.ticket.id}`, fake.map((f) => Buffer.from(f.originalname, 'latin1').toString('utf8')).join(', ')); return res.status(400).json({ error: 'El contenido del archivo no corresponde a su tipo (' + Buffer.from(fake[0].originalname, 'latin1').toString('utf8') + ')' }); }
   const ins = db.prepare('INSERT INTO attachments (ticket_id, user_id, original_name, stored_name, size) VALUES (?,?,?,?,?)');
   try {
     db.transaction(() => req.files.forEach((f) => ins.run(req.ticket.id, req.user.id,
@@ -406,6 +533,7 @@ app.get('/api/attachments/:id', auth, wrap((req, res) => {
     .get(Number(req.params.id));
   if (!a || !canSee(req.user, a)) return res.status(404).json({ error: 'Archivo no encontrado' });
   res.set('X-Content-Type-Options', 'nosniff');
+  res.set('Content-Security-Policy', "sandbox; default-src 'none'"); // un archivo descargado nunca ejecuta scripts en el sitio
   res.download(path.join(UPLOAD_DIR, a.stored_name), a.original_name, (err) => {
     if (err && !res.headersSent) res.status(404).json({ error: 'Archivo no encontrado' });
   });
@@ -417,6 +545,7 @@ app.delete('/api/attachments/:id', auth, wrap((req, res) => {
   if (!a || !canSee(req.user, a)) return res.status(404).json({ error: 'Archivo no encontrado' });
   if (a.user_id !== req.user.id && req.user.role !== 'admin') return res.status(403).json({ error: 'Sin permiso' });
   db.prepare('DELETE FROM attachments WHERE id = ?').run(a.id);
+  audit.log(req, 'attachment.delete', a.original_name, `ticket #${a.ticket_id}`);
   fs.unlink(path.join(UPLOAD_DIR, a.stored_name), () => {});
   res.json({ ok: true });
 }));
@@ -546,6 +675,12 @@ app.get('/api/dashboard', auth, viewer, wrap((req, res) => {
 }));
 
 // ---------- Admin ----------
+// Todo cambio hecho desde Administración queda en la bitácora (sin valores: nunca se registran contraseñas)
+app.use('/api/admin', (req, res, next) => {
+  if (req.method !== 'GET' && !req.path.startsWith('/users') && !req.path.endsWith('/test'))
+    res.on('finish', () => { if (res.statusCode < 400) audit.log(req, 'admin.change', `${req.method} ${req.originalUrl.split('?')[0]}`); });
+  next();
+});
 app.get('/api/admin/users', auth, admin, wrap((req, res) => {
   res.json(db.prepare(`${USER_SELECT} ORDER BY u.name`).all());
 }));
@@ -588,6 +723,15 @@ app.patch('/api/admin/users/:id', auth, admin, wrap((req, res) => {
     if (!active && u.id === req.user.id) return res.status(400).json({ error: 'No puedes desactivar tu propia cuenta' });
   }
   db.prepare('UPDATE users SET name = ?, email = ?, role = ?, department_id = ?, lunch_shift = ?, active = ? WHERE id = ?').run(name, email, role, dep, lunch, active, u.id);
+  const ch = [];
+  if (name !== u.name) ch.push(`nombre: ${u.name} → ${name}`);
+  if (email !== u.email) ch.push(`correo: ${u.email} → ${email}`);
+  if (role !== u.role) ch.push(`rol: ${u.role} → ${role}`);
+  if (dep !== u.department_id) ch.push('departamento');
+  if (active !== u.active) ch.push(active ? 'cuenta activada' : 'cuenta desactivada');
+  if (lunch !== u.lunch_shift) ch.push('turno de almuerzo');
+  if (ch.length) audit.log(req, 'user.update', u.email, ch.join('; '));
+  if (!active && u.active) bumpEpoch(u.id); // al desactivar, sus sesiones abiertas mueren (aunque se reactive después). El rol nuevo ya rige al instante: se lee en cada petición.
   res.json(getUser(u.id));
 }));
 
@@ -685,6 +829,49 @@ app.put('/api/admin/forms', auth, admin, wrap((req, res) => {
 app.delete('/api/admin/forms', auth, admin, wrap((req, res) => {
   if (!forms.remove(req.query.category)) return res.status(404).json({ error: 'Formulario no encontrado' });
   res.json(automationState());
+}));
+
+// Seguridad: quitar la verificación en dos pasos a quien perdió su teléfono y sus códigos
+app.post('/api/admin/users/:id/2fa-reset', auth, admin, wrap((req, res) => {
+  const u = getUser(Number(req.params.id));
+  if (!u) return res.status(404).json({ error: 'Usuario no encontrado' });
+  db.prepare('UPDATE users SET totp_enabled = 0, totp_secret = NULL, recovery_codes = NULL, totp_last = 0 WHERE id = ?').run(u.id);
+  bumpEpoch(u.id);
+  audit.log(req, '2fa.reset', u.email);
+  res.json(getUser(u.id));
+}));
+
+// Cerrar todas las sesiones abiertas de una persona (por ejemplo, si perdió un equipo)
+app.post('/api/admin/users/:id/logout-all', auth, admin, wrap((req, res) => {
+  const u = getUser(Number(req.params.id));
+  if (!u) return res.status(404).json({ error: 'Usuario no encontrado' });
+  bumpEpoch(u.id);
+  audit.log(req, 'session.revoke', u.email);
+  if (u.id === req.user.id) refreshEpoch(req);
+  res.json({ ok: true });
+}));
+
+app.get('/api/admin/security', auth, admin, wrap((req, res) => {
+  const checks = securityCheck.run({ ...process.env, ...(imap.enabled() ? {} : {}) }, { envFile: process.env.ENV_FILE || path.join(__dirname, '..', '.env') });
+  const q = (sql) => db.prepare(sql).get().n;
+  res.json({
+    checks, summary: securityCheck.summary(checks),
+    stats: {
+      users: q("SELECT COUNT(*) AS n FROM users WHERE active = 1"),
+      with_2fa: q("SELECT COUNT(*) AS n FROM users WHERE active = 1 AND totp_enabled = 1"),
+      staff_without_2fa: q("SELECT COUNT(*) AS n FROM users WHERE active = 1 AND totp_enabled = 0 AND role IN ('admin','coordinator','agent')"),
+      failed_logins_24h: q("SELECT COUNT(*) AS n FROM audit_log WHERE action IN ('login.fail','login.2fa_fail') AND at >= datetime('now','-1 day')"),
+      blocked_24h: q("SELECT COUNT(*) AS n FROM audit_log WHERE action = 'login.blocked' AND at >= datetime('now','-1 day')"),
+    },
+    retention_days: audit.RETENTION_DAYS,
+  });
+}));
+app.get('/api/admin/audit', auth, admin, wrap((req, res) => res.json(audit.list(req.query))));
+app.get('/api/admin/audit.csv', auth, admin, wrap((req, res) => {
+  audit.log(req, 'audit.export');
+  const lines = ['fecha_utc,usuario,ip,accion,objetivo,detalle'].concat(audit.list({ ...req.query, limit: 2000 }).map((r) => [r.at, r.actor, r.ip, r.action, r.target, r.detail].map(csvCell).join(',')));
+  res.set('Content-Type', 'text/csv; charset=utf-8'); res.set('Content-Disposition', 'attachment; filename="bitacora.csv"');
+  res.send('﻿' + lines.join('\r\n'));
 }));
 
 // ── Correo: configuración y pruebas de conexión (solo administradores) ──

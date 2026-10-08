@@ -73,7 +73,7 @@ function authView(mode) {
     <form id="f">
       ${reg || needDept ? `<label>Nombre completo</label><input name="name" required>` : ''}
       <label>Correo de la empresa</label><input name="email" type="email" placeholder="usuario@${esc(meta.domain)}" required autocomplete="username" ${needDept ? 'readonly' : ''}>
-      <label>Contraseña${meta.imap ? ' de tu correo' : ''}</label><input name="password" type="password" minlength="${reg ? 8 : 1}" required autocomplete="${reg ? 'new-password' : 'current-password'}" ${needDept ? 'readonly' : ''}>
+      <label>Contraseña${meta.imap ? ' de tu correo' : ''}</label><input name="password" type="password" minlength="${reg ? 10 : 1}" required autocomplete="${reg ? 'new-password' : 'current-password'}" ${needDept ? 'readonly' : ''}>
       ${reg || needDept ? `<label>Departamento</label><select name="department_id">${options(meta.departments)}</select>` : ''}
       <button>${reg ? 'Registrarme' : needDept ? 'Continuar' : 'Entrar'}</button><div class="err" id="err" role="alert"></div>
     </form>
@@ -85,8 +85,21 @@ function authView(mode) {
       try {
         const r = await api(reg ? '/register' : '/login', { method: 'POST', body });
         if (r.needs_department) { needDept = true; draw(); $('#f').email.value = body.email; $('#f').password.value = body.password; return; }
+        if (r.needs_2fa) return codeStep();
         me = r; location.hash = canViewAll() ? '#/dashboard' : '#/tickets'; start();
       } catch (er) { $('#err').textContent = er.message; }
+    };
+  };
+  // Segundo paso: código de la app autenticadora (o un código de recuperación)
+  const codeStep = () => {
+    $('.card.auth').innerHTML = `<h2>Verificación en dos pasos</h2><p class="muted sub">Escribe el código de 6 dígitos de tu app autenticadora, o uno de tus códigos de recuperación.</p>
+      <form id="f2"><label>Código</label><input name="code" inputmode="numeric" autocomplete="one-time-code" required autofocus maxlength="20">
+      <button>Verificar</button><div class="err" id="err" role="alert"></div></form><p class="muted" style="text-align:center;margin-top:14px"><a href="#/login" id="back">← Volver</a></p>`;
+    $('#back').onclick = (ev) => { ev.preventDefault(); draw(); };
+    $('#f2').onsubmit = async (e) => {
+      e.preventDefault();
+      try { me = await api('/login/2fa', { method: 'POST', body: formData(e.target) }); location.hash = canViewAll() ? '#/dashboard' : '#/tickets'; start(); }
+      catch (er) { $('#err').textContent = er.message; }
     };
   };
   draw();
@@ -271,25 +284,29 @@ async function detailView(id) {
 async function adminView() {
   if (me.role !== 'admin') return (location.hash = '#/tickets');
   const tabParam = new URLSearchParams(location.hash.split('?')[1] || '').get('tab');
-  const tab = tabParam === 'mail' ? 'mail' : tabParam === 'auto' ? 'auto' : 'users';
-  const tabs = `<div class="tabs"><a href="#/admin" class="${tab === 'users' ? 'on' : ''}">Usuarios</a><a href="#/admin?tab=auto" class="${tab === 'auto' ? 'on' : ''}">Automatización</a><a href="#/admin?tab=mail" class="${tab === 'mail' ? 'on' : ''}">Correo</a></div>`;
+  const tab = ['mail', 'auto', 'sec'].includes(tabParam) ? tabParam : 'users';
+  const tabs = `<div class="tabs"><a href="#/admin" class="${tab === 'users' ? 'on' : ''}">Usuarios</a><a href="#/admin?tab=auto" class="${tab === 'auto' ? 'on' : ''}">Automatización</a><a href="#/admin?tab=mail" class="${tab === 'mail' ? 'on' : ''}">Correo</a><a href="#/admin?tab=sec" class="${tab === 'sec' ? 'on' : ''}">Seguridad</a></div>`;
   if (tab === 'mail') return mailAdminView(tabs);
   if (tab === 'auto') return autoAdminView(tabs);
+  if (tab === 'sec') return securityAdminView(tabs);
   const users = await api('/admin/users');
   app.innerHTML = `<div class="pagehead"><div><h2>Administración</h2><span class="muted">Usuarios, roles, departamentos y turnos de almuerzo</span></div></div>${tabs}
-    <div class="card"><h3>Usuarios</h3><div class="tscroll"><table class="cards"><tr><th>Nombre</th><th>Correo</th><th>Departamento</th><th>Rol</th><th>Almuerzo (TI)</th><th>Activo</th></tr>
+    <div class="card"><h3>Usuarios</h3><div class="tscroll"><table class="cards"><tr><th>Nombre</th><th>Correo</th><th>Departamento</th><th>Rol</th><th>Almuerzo (TI)</th><th>Activo</th><th>Seguridad</th></tr>
     ${users.map((u) => `<tr class="row static ${u.active ? '' : 'off'}" data-id="${u.id}"><td class="ttl" data-label="Nombre"><input class="inline" data-f="name" value="${esc(u.name)}" maxlength="100" aria-label="Nombre"></td>
     <td data-label="Correo"><input class="inline" data-f="email" type="email" value="${esc(u.email)}" maxlength="200" aria-label="Correo"></td>
     <td data-label="Departamento"><select data-f="department_id">${options(meta.departments, u.department_id)}</select></td>
     <td data-label="Rol"><select data-f="role">${options(Object.entries(ROLE_NAMES).map(([id, name]) => ({ id, name })), u.role)}</select></td>
     <td data-label="Almuerzo">${!['agent', 'admin'].includes(u.role) ? '<span class="muted">—</span>' : `<select data-f="lunch_shift"><option value="">Sin turno</option>${Object.entries(meta.sla.LUNCH_SHIFTS).map(([k, v]) => `<option value="${esc(k)}" ${u.lunch_shift === k ? 'selected' : ''}>Turno ${esc(k)} (${esc(v[0])}–${esc(v[1])})</option>`).join('')}</select>`}</td>
-    <td data-label="Activo"><input type="checkbox" data-f="active" ${u.active ? 'checked' : ''} ${u.id === me.id ? 'disabled' : ''} title="Desmarca para desactivar la cuenta (no podrá entrar)" aria-label="Activo"></td></tr>`).join('')}</table></div>
+    <td data-label="Activo"><input type="checkbox" data-f="active" ${u.active ? 'checked' : ''} ${u.id === me.id ? 'disabled' : ''} title="Desmarca para desactivar la cuenta (no podrá entrar)" aria-label="Activo"></td>
+    <td data-label="Seguridad"><span class="muted">2FA ${u.totp_enabled ? 'sí' : 'no'}</span> <button class="link ulogout" type="button">cerrar sesiones</button>${u.totp_enabled ? ' <button class="link u2fa" type="button">quitar 2FA</button>' : ''}</td></tr>`).join('')}</table></div>
     <div class="saved" id="saved" role="status"></div><div class="err" id="err" role="alert"></div><p class="muted">Puedes cambiar aquí el nombre, el correo, el departamento y el rol de cada persona: se guarda al terminar de escribir.</p><p class="muted">Horario laboral SLA: ${esc(String(meta.sla.START[0]).padStart(2, '0'))}:${esc(String(meta.sla.START[1]).padStart(2, '0'))}–${esc(String(meta.sla.END[0]).padStart(2, '0'))}:${esc(String(meta.sla.END[1]).padStart(2, '0'))} (${esc(meta.sla.TZ)}). El almuerzo pausa el SLA de los tickets asignados a esa persona.</p><p class="muted">Usuario = pide tickets · Líder = además ve los tickets de su departamento · Técnico (TI) = atiende tickets; su dashboard solo muestra lo suyo; sin reportes ni administración · Encargado de TI = ve todo, asigna, dashboard del equipo y reportes; sin administración · Gerencia = ve todo, dashboard y reportes, solo lectura · Administrador = TI + administra. Los tickets solo se asignan a Técnicos y Administradores. Desmarca «Activo» para quien ya no trabaja en la empresa: no podrá entrar ni recibirá tickets, pero se conserva su historial.</p></div>
     <div class="card"><h3>Nuevo departamento</h3><form id="dep" class="filters"><input name="name" required placeholder="Nombre del departamento"><button>Agregar</button></form></div>`;
   document.querySelectorAll('tr.static select, tr.static input').forEach((s) => (s.onchange = async () => {
     try { await api('/admin/users/' + s.closest('tr').dataset.id, { method: 'PATCH', body: { [s.dataset.f]: s.type === 'checkbox' ? s.checked : s.value } }); s.closest('tr').classList.toggle('off', s.type === 'checkbox' && !s.checked); $('#err').textContent = ''; $('#saved').textContent = '✔ Guardado'; setTimeout(() => { const el = $('#saved'); if (el) el.textContent = ''; }, 2500); }
     catch (er) { $('#err').textContent = er.message; $('#saved').textContent = ''; setTimeout(adminView, 2500); }
   }));
+  document.querySelectorAll('.ulogout').forEach((b) => (b.onclick = async () => { if (!confirm('¿Cerrar todas las sesiones abiertas de esta persona?')) return; try { await api(`/admin/users/${b.closest('tr').dataset.id}/logout-all`, { method: 'POST', body: {} }); $('#saved').textContent = '✔ Sesiones cerradas'; $('#err').textContent = ''; } catch (er) { $('#err').textContent = er.message; } }));
+  document.querySelectorAll('.u2fa').forEach((b) => (b.onclick = async () => { if (!confirm('¿Quitar la verificación en dos pasos a esta persona? Tendrá que volver a activarla.')) return; try { await api(`/admin/users/${b.closest('tr').dataset.id}/2fa-reset`, { method: 'POST', body: {} }); adminView(); } catch (er) { $('#err').textContent = er.message; } }));
   $('#dep').onsubmit = async (e) => {
     e.preventDefault();
     try { await api('/admin/departments', { method: 'POST', body: formData(e.target) }); meta = await api('/meta'); adminView(); }
@@ -299,14 +316,54 @@ async function adminView() {
 
 // ---------- Mi perfil ----------
 function profileView() {
-  app.innerHTML = `<div class="pagehead"><div><h2>Mi perfil</h2><span class="muted">Cambia tu nombre y tu departamento</span></div></div>
+  app.innerHTML = `<div class="pagehead"><div><h2>Mi perfil</h2><span class="muted">Tus datos, tu contraseña y la verificación en dos pasos</span></div></div>
     <div class="card"><form id="pf"><div class="grid2">
       <div><label>Nombre completo</label><input name="name" required minlength="2" maxlength="100" value="${esc(me.name)}"></div>
       <div><label>Departamento</label><select name="department_id">${options(meta.departments, me.department_id)}</select></div>
       <div><label>Correo</label><input value="${esc(me.email)}" disabled></div>
       <div><label>Rol</label><input value="${esc(ROLE_NAMES[me.role] || me.role)}" disabled></div></div>
       <button>Guardar</button> <span class="saved" id="saved" role="status"></span><div class="err" id="err" role="alert"></div>
-      <p class="muted">El correo y el rol los cambia un administrador.</p></form></div>`;
+      <p class="muted">El correo y el rol los cambia un administrador.</p></form></div>
+    ${me.must_2fa ? '<div class="card warnbox"><b>Tu rol exige la verificación en dos pasos.</b> Actívala aquí abajo para seguir usando el sistema.</div>' : ''}
+    <div class="card" id="sec2fa"></div>
+    ${me.local_password ? `<div class="card"><h3>Cambiar mi contraseña</h3><form id="pw"><div class="grid2"><div><label>Contraseña actual</label><input name="current" type="password" required autocomplete="current-password"></div>
+      <div><label>Contraseña nueva (mínimo 10 caracteres)</label><input name="next" type="password" required minlength="10" autocomplete="new-password"></div></div>
+      <button>Cambiar contraseña</button> <span class="saved" id="pwok" role="status"></span><div class="err" id="pwerr" role="alert"></div>
+      <p class="muted">Al cambiarla se cierran tus sesiones abiertas en otros equipos.</p></form></div>` : ''}`;
+  const draw2fa = () => {
+    const box = $('#sec2fa');
+    box.innerHTML = me.totp_enabled
+      ? `<h3>Verificación en dos pasos <span class="chip ok">Activada</span></h3><p class="muted">Al entrar, además de tu contraseña se pide un código de tu teléfono.</p>
+         ${me.must_2fa === false && !['admin', 'coordinator'].includes(me.role) ? '' : ''}
+         <label>Para desactivarla, escribe un código actual</label><div class="filters"><input id="offcode" inputmode="numeric" maxlength="20" placeholder="000000"><button id="off" class="ghost">Desactivar</button></div><div class="err" id="e2" role="alert"></div>`
+      : `<h3>Verificación en dos pasos <span class="chip off">Desactivada</span></h3><p class="muted">Protege tu cuenta con un código que cambia cada 30 segundos (Google Authenticator, Microsoft Authenticator, Authy…).</p>
+         <button id="on">Activar</button><div class="err" id="e2" role="alert"></div>`;
+    if ($('#on')) $('#on').onclick = async () => {
+      try {
+        const r = await api('/me/2fa/setup', { method: 'POST', body: {} });
+        box.innerHTML = `<h3>Activar verificación en dos pasos</h3><ol class="steps2fa"><li>En tu app autenticadora elige <b>Agregar cuenta → Ingresar clave de configuración</b> y escribe esta clave (cuenta: ${esc(me.email)}):<div class="secretbox">${esc(r.secret.match(/.{1,4}/g).join(' '))}</div></li>
+          <li>Escribe aquí el código de 6 dígitos que muestra la app:<div class="filters"><input id="oncode" inputmode="numeric" maxlength="8" placeholder="000000"><button id="confirm2fa">Confirmar</button></div></li></ol><div class="err" id="e2" role="alert"></div>`;
+        $('#confirm2fa').onclick = async () => {
+          try {
+            const x = await api('/me/2fa/enable', { method: 'POST', body: { code: $('#oncode').value } });
+            me = await api('/me');
+            box.innerHTML = `<h3>Verificación en dos pasos <span class="chip ok">Activada</span></h3><p><b>Guarda estos códigos de recuperación.</b> Cada uno sirve una sola vez si pierdes tu teléfono. No se vuelven a mostrar.</p>
+              <div class="codes">${x.recovery_codes.map((c) => `<code>${esc(c)}</code>`).join('')}</div><button id="done" style="margin-top:12px">Ya los guardé</button>`;
+            $('#done').onclick = () => { draw2fa(); start(); };
+          } catch (er) { $('#e2').textContent = er.message; }
+        };
+      } catch (er) { $('#e2').textContent = er.message; }
+    };
+    if ($('#off')) $('#off').onclick = async () => {
+      try { await api('/me/2fa/disable', { method: 'POST', body: { code: $('#offcode').value } }); me = await api('/me'); draw2fa(); } catch (er) { $('#e2').textContent = er.message; }
+    };
+  };
+  draw2fa();
+  if ($('#pw')) $('#pw').onsubmit = async (e) => {
+    e.preventDefault();
+    try { await api('/me/password', { method: 'POST', body: formData(e.target) }); e.target.reset(); $('#pwerr').textContent = ''; $('#pwok').textContent = '✔ Contraseña cambiada'; }
+    catch (er) { $('#pwerr').textContent = er.message; $('#pwok').textContent = ''; }
+  };
   $('#pf').onsubmit = async (e) => {
     e.preventDefault();
     try {
@@ -315,6 +372,34 @@ function profileView() {
       $('#err').textContent = ''; $('#saved').textContent = '✔ Guardado';
     } catch (er) { $('#err').textContent = er.message; $('#saved').textContent = ''; }
   };
+}
+
+// ---------- Administración: Seguridad ----------
+const AUDIT_NAMES = { 'login.ok': 'Inicio de sesión', 'login.fail': 'Intento fallido', 'login.blocked': 'Bloqueo por intentos', 'login.disabled': 'Cuenta desactivada', 'login.2fa_fail': 'Código 2FA incorrecto', logout: 'Cierre de sesión',
+  'user.register': 'Cuenta creada', 'user.update': 'Usuario modificado', 'admin.change': 'Cambio de configuración', '2fa.enable': '2FA activada', '2fa.disable': '2FA desactivada', '2fa.disable_fail': '2FA: error al desactivar', '2fa.reset': '2FA restablecida',
+  'password.change': 'Contraseña cambiada', 'password.fail': 'Cambio de contraseña fallido', 'session.revoke': 'Sesiones cerradas', 'upload.rejected': 'Archivo rechazado', 'attachment.delete': 'Adjunto eliminado', 'audit.export': 'Bitácora exportada' };
+async function securityAdminView(tabs) {
+  const params = new URLSearchParams((location.hash.split('?')[1] || '').replace(/(^|&)tab=sec/, ''));
+  const f = { action: params.get('action') || '', q: params.get('q') || '', from: params.get('from') || '', to: params.get('to') || '' };
+  const qs = new URLSearchParams(Object.entries(f).filter(([, v]) => v));
+  const [sec, rows] = await Promise.all([api('/admin/security'), api('/admin/audit?' + qs)]);
+  const icon = { ok: '✔', warn: '⚠', bad: '✘' };
+  app.innerHTML = `<div class="pagehead"><div><h2>Administración</h2><span class="muted">Revisión de seguridad y bitácora de actividad</span></div></div>${tabs}
+    <div class="card"><h3>Estado de la configuración <span class="chip ${sec.summary.bad ? 'bad' : sec.summary.warn ? 'off' : 'ok'}">${sec.summary.ok} bien · ${sec.summary.warn} por mejorar · ${sec.summary.bad} crítico(s)</span></h3>
+      <ul class="checks">${sec.checks.map((c) => `<li class="${c.level}"><b>${icon[c.level]}</b> <span>${esc(c.msg)}${c.fix && c.level !== 'ok' ? `<div class="muted">→ ${esc(c.fix)}</div>` : ''}</span></li>`).join('')}</ul>
+      <p class="muted">Se cambian en el archivo <code>.env</code> del servidor y se reinicia el sistema. En una terminal: <code>npm run security:check</code>.</p></div>
+    <div class="kpis">${[['Usuarios activos', sec.stats.users, ''], ['Con verificación en 2 pasos', sec.stats.with_2fa, ''], ['Personal de TI sin 2FA', sec.stats.staff_without_2fa, sec.stats.staff_without_2fa ? 'bad' : ''],
+      ['Intentos fallidos (24 h)', sec.stats.failed_logins_24h, sec.stats.failed_logins_24h > 20 ? 'bad' : ''], ['Bloqueos (24 h)', sec.stats.blocked_24h, sec.stats.blocked_24h ? 'bad' : '']]
+      .map(([k, v, c]) => `<div class="card kpi ${c}"><div class="muted">${k}</div><div class="num">${v}</div></div>`).join('')}</div>
+    <div class="card"><h3>Bitácora <span class="muted">· se conserva ${sec.retention_days} días</span></h3>
+      <form id="af" class="filters"><input name="q" placeholder="Buscar persona, IP, detalle…" value="${esc(f.q)}"><select name="action"><option value="">Toda la actividad</option>${[['login', 'Accesos'], ['user', 'Usuarios'], ['admin', 'Configuración'], ['2fa', 'Verificación en 2 pasos'], ['password', 'Contraseñas'], ['upload', 'Adjuntos rechazados']].map(([k, v]) => `<option value="${k}" ${f.action === k ? 'selected' : ''}>${v}</option>`).join('')}</select>
+        <input type="date" name="from" value="${esc(f.from)}" aria-label="Desde"><input type="date" name="to" value="${esc(f.to)}" aria-label="Hasta"><button>Filtrar</button>
+        <a class="btn ghost" style="margin:0" href="/api/admin/audit.csv?${esc(qs)}">⬇ CSV</a></form>
+      <div class="tscroll"><table class="cards"><tr><th>Fecha (UTC)</th><th>Quién</th><th>IP</th><th>Acción</th><th>Sobre</th><th>Detalle</th></tr>
+      ${rows.map((r) => `<tr class="static ${/fail|blocked|rejected|disabled/.test(r.action) ? 'warnrow' : ''}"><td data-label="Fecha">${esc(r.at)}</td><td data-label="Quién">${esc(r.actor || '—')}</td><td data-label="IP">${esc(r.ip || '')}</td>
+        <td data-label="Acción">${esc(AUDIT_NAMES[r.action] || r.action)}</td><td data-label="Sobre">${esc(r.target || '')}</td><td data-label="Detalle">${esc(r.detail || '')}</td></tr>`).join('') || '<tr><td colspan="6" class="muted">Sin actividad con esos filtros.</td></tr>'}</table></div>
+      <p class="muted">Mostrando las últimas ${rows.length} entradas. Nunca se guardan contraseñas ni códigos.</p></div>`;
+  $('#af').onsubmit = (e) => { e.preventDefault(); location.hash = '#/admin?' + new URLSearchParams([['tab', 'sec'], ...[...new FormData(e.target)].filter(([, v]) => v)]); };
 }
 
 // ---------- Administración: Automatización ----------
@@ -520,6 +605,7 @@ async function route() {
   if (!meta || (me && !meta.statuses)) meta = await api('/meta'); // sin sesión el servidor da solo lo mínimo
   const h = location.hash.replace(/^#/, '') || (canViewAll() ? '/dashboard' : '/tickets');
   document.body.classList.toggle('login', !me);
+  if (me && me.must_2fa && h !== '/profile') { location.hash = '#/profile'; return; }
   if (!me) return authView(h === '/register' ? 'register' : 'login');
   const cur = h.startsWith('/ticket/') ? 'tickets' : h.split('?')[0].replace('/', '') || 'tickets';
   document.querySelectorAll('#nav a').forEach((a) => a.classList.toggle('active', a.dataset.r === cur));

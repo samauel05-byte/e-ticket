@@ -87,14 +87,14 @@ test('desactivar usuarios: no entran, su sesión cae, no se les asigna y no se p
   const r = await admin.patch('/api/admin/users/' + uid('luis@empresa.com'), { active: false });
   assert.equal(r.status, 200); assert.equal(r.data.active, 0);
   assert.equal((await luis.get('/api/me')).status, 401); // la sesión abierta deja de valer
-  const intento = await client(ctx.base).post('/api/login', { email: 'luis@empresa.com', password: 'password123' });
+  const intento = await client(ctx.base).post('/api/login', { email: 'luis@empresa.com', password: 'Segura-2026-ok' });
   assert.equal(intento.status, 403); assert.match(intento.data.error, /desactivada/);
   const t = await nuevo(ana);
   assert.equal((await admin.patch('/api/tickets/' + t.id, { assignee_id: uid('luis@empresa.com') })).status, 400);
   assert.ok(!(await admin.get('/api/staff')).data.some((s) => s.email === 'luis@empresa.com'));
   assert.equal((await admin.patch('/api/admin/users/' + uid('admin@empresa.com'), { active: false })).status, 400);
   assert.equal((await admin.patch('/api/admin/users/' + uid('luis@empresa.com'), { active: true })).data.active, 1); // se puede reactivar
-  assert.equal((await client(ctx.base).post('/api/login', { email: 'luis@empresa.com', password: 'password123' })).status, 200);
+  assert.equal((await client(ctx.base).post('/api/login', { email: 'luis@empresa.com', password: 'Segura-2026-ok' })).status, 200);
 });
 
 test('avisos de SLA: por vencer (80 %) y vencido, una sola vez, sin avisar lo que ya estaba vencido al activarse', async () => {

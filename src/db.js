@@ -90,6 +90,43 @@ if (!db.prepare('PRAGMA table_info(users)').all().some((c) => c.name === 'active
 if (!db.prepare('PRAGMA table_info(comments)').all().some((c) => c.name === 'internal'))
   db.exec('ALTER TABLE comments ADD COLUMN internal INTEGER NOT NULL DEFAULT 0');
 
+// Base de conocimiento y encuesta de satisfacción
+const hadKb = Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name = 'kb_articles'").get());
+db.exec(`
+CREATE TABLE IF NOT EXISTS kb_articles (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  title TEXT NOT NULL,
+  body TEXT NOT NULL,
+  category TEXT NOT NULL DEFAULT 'General',
+  published INTEGER NOT NULL DEFAULT 1,
+  views INTEGER NOT NULL DEFAULT 0,
+  created_by INTEGER REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_by INTEGER REFERENCES users(id)
+);
+CREATE TABLE IF NOT EXISTS kb_votes (
+  article_id INTEGER NOT NULL REFERENCES kb_articles(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  helpful INTEGER NOT NULL,
+  PRIMARY KEY (article_id, user_id)
+);
+CREATE TABLE IF NOT EXISTS ticket_ratings (
+  ticket_id INTEGER PRIMARY KEY REFERENCES tickets(id) ON DELETE CASCADE,
+  rating INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
+  comment TEXT,
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);`);
+if (!hadKb) {
+  const ins = db.prepare('INSERT INTO kb_articles (title, body, category) VALUES (?, ?, ?)');
+  ins.run('No puedo conectarme a la VPN', 'Antes de crear un ticket, prueba esto:\n\n1. Comprueba que tienes internet abriendo cualquier página web.\n2. Cierra la aplicación de la VPN por completo y vuélvela a abrir.\n3. Verifica que tu usuario y contraseña sean los de siempre (los mismos de tu correo).\n4. Si cambiaste tu contraseña hace poco, cierra sesión en la VPN y entra con la nueva.\n5. Reinicia el equipo e inténtalo otra vez.\n\nSi sigue fallando, crea un ticket e indica el **mensaje de error exacto** que te aparece.', 'Red / Internet');
+  ins.run('Olvidé mi contraseña del correo', 'La contraseña de tu correo la restablece Tecnología.\n\n- Crea un ticket de categoría **Accesos / Contraseñas** con prioridad alta.\n- Indica tu nombre completo y desde qué teléfono o equipo escribes.\n- Por seguridad, TI puede pedirte un dato extra para confirmar que eres tú.\n\nNunca compartas tu contraseña con nadie, ni siquiera con TI: no la necesitamos para ayudarte.', 'Accesos / Contraseñas');
+  ins.run('La impresora no imprime', 'Revisa en este orden:\n\n1. Que la impresora esté encendida y sin luces de error.\n2. Que tenga papel y tóner.\n3. Que sea la impresora elegida en el cuadro de impresión (a veces cambia sola).\n4. Cancela los trabajos pendientes en la cola de impresión y vuelve a imprimir.\n\nSi es la impresora de red, prueba imprimir desde otro equipo: si tampoco funciona, el problema es de la impresora y no de tu computadora.', 'Impresoras');
+  ins.run('El Wi-Fi no conecta o va muy lento', '1. Apaga y enciende el Wi-Fi de tu equipo.\n2. Acércate al punto de acceso y comprueba si otras personas tienen el mismo problema.\n3. Olvida la red y vuelve a conectarte con tu usuario.\n4. Reinicia tu equipo.\n\nSi varias personas de tu zona no tienen señal, avísanos con un ticket **urgente** e indica el piso o la sala.', 'Red / Internet');
+}
+
 // Seguridad: sesiones revocables (época), verificación en dos pasos y códigos de recuperación
 for (const [col, ddl] of [
   ['session_epoch', 'ALTER TABLE users ADD COLUMN session_epoch INTEGER NOT NULL DEFAULT 0'],

@@ -30,6 +30,8 @@ Abre http://localhost:3000.
 - **Historial** de cada ticket: quién cambió estado, responsable, prioridad o categoría, y cuándo.
 - **Desactivar usuarios** (Administración → Usuarios → «Activo»): no entran, no reciben tickets ni avisos y se conserva su historial.
 - **Avisos de SLA** por correo: al 80 % del tiempo («por vencer») y cuando se vence, una vez por ticket, al responsable (o a todo TI si nadie lo tomó), al encargado y a `NOTIFY_NEW_TO`.
+- **Ayuda (base de conocimiento)**: artículos con buscador y categorías, visibles para todos; mientras alguien escribe el asunto de un ticket se le sugieren artículos relacionados. TI crea y edita (con borradores), puede convertir la solución de un ticket en artículo, y los usuarios votan si les sirvió.
+- **Encuesta de satisfacción**: al resolverse un ticket el solicitante lo califica de 1 a 5 estrellas con un comentario opcional (el aviso por correo lo invita). Una calificación de 1 o 2 avisa al encargado. El promedio aparece en el dashboard (general y por técnico), en reportes y en el CSV.
 - **Seguridad** (ver [SECURITY.md](SECURITY.md)): verificación en dos pasos (opcional u obligatoria por rol), sesiones con caducidad y revocables, límites de uso, política de contraseñas, revisión del contenido de adjuntos, cabeceras estrictas, contenedor endurecido y **bitácora** de actividad. `npm run security:check` y Administración → Seguridad muestran qué falta ajustar.
 - **Automatización** (Administración → Automatización):
   - *Asignación automática* de cada ticket nuevo (web o correo) por turnos o por carga, con grupos de técnicos por categoría. Viene desactivada.

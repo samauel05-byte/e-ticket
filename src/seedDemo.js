@@ -55,6 +55,12 @@ function seed() {
     ['luis', 'Ventas', 'Wi-Fi no conecta en el piso 3', 'Desde el lunes no hay señal.', 'Red / Internet', 'urgente', 'resuelto', 'laura', 180, 1, 4, 'El punto de acceso del piso 3 estaba sin energía; se restableció el switch PoE.'],
     ['marta', 'Recursos Humanos', 'Licencia de Adobe', 'Necesito Acrobat para firmar PDFs.', 'Software', 'media', 'resuelto', 'laura', 110, 3, 14, 'Se asignó la licencia de Acrobat y se instaló en tu equipo.'],
   ];
+  // Calificaciones de ejemplo: [estrellas, comentario]
+  const RATE = {
+    'Restablecer contraseña de correo': [5, 'Muy rápido, gracias'], 'Acceso al sistema contable': [4, null], 'Proyector no enciende': [5, null],
+    'Instalar impresora de red': [3, 'Tardó un poco en responder'], 'Actualizar Windows': [4, null], 'Cuenta de nuevo ingreso': [5, 'Todo listo antes de que llegara'],
+    'Wi-Fi no conecta en el piso 3': [2, 'Volvió a fallar al día siguiente'], 'Licencia de Adobe': [4, null],
+  };
   const ago = (h) => `datetime('now','-${h} hours')`;
   for (const [who, d, title, desc, cat, pri, status, asg, hAgo, hResp, hRes, solucion] of rows) {
     const id = db.prepare(`INSERT INTO tickets (title, description, category, priority, status, requester_id, department_id, assignee_id,
@@ -63,6 +69,7 @@ function seed() {
         ${hResp == null ? 'NULL' : ago(hAgo - hResp)}, ${hRes == null ? 'NULL' : ago(hAgo - hRes)}, ?)`)
       .run(title, desc, cat, pri, status, U[who], dep(d), asg ? U[asg] : null, solucion || null).lastInsertRowid;
     db.prepare(`INSERT INTO ticket_events (ticket_id, at, status, assignee_id) VALUES (?, ${ago(hAgo)}, 'abierto', NULL)`).run(id);
+    if (RATE[title] && (status === 'resuelto' || status === 'cerrado')) db.prepare('INSERT INTO ticket_ratings (ticket_id, rating, comment, user_id) VALUES (?,?,?,?)').run(id, RATE[title][0], RATE[title][1], U[who]);
     if (status !== 'abierto') {
       db.prepare(`INSERT INTO ticket_events (ticket_id, at, status, assignee_id) VALUES (?, ${ago(hAgo - (hResp ?? 0))}, ?, ?)`)
         .run(id, status === 'resuelto' || status === 'cerrado' ? 'en_progreso' : status, asg ? U[asg] : null);

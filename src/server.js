@@ -415,6 +415,8 @@ app.get('/api/tickets/:id', auth, wrap((req, res) => {
     FROM comments c JOIN users u ON u.id = c.user_id WHERE c.ticket_id = ? ${seeInternal ? '' : 'AND c.internal = 0'} ORDER BY c.id`).all(t.id);
   try { t.form = t.form_data ? JSON.parse(t.form_data) : []; } catch { t.form = []; }
   delete t.form_data;
+  t.rating_detail = db.prepare('SELECT rating, comment, updated_at FROM ticket_ratings WHERE ticket_id = ?').get(t.id) || null;
+  t.can_rate = ['resuelto', 'cerrado'].includes(t.status) && t.requester_id === req.user.id;
   t.history = historyOf(t.id);
   t.can_reopen = canReopen(req.user, t);
   t.can_confirm = t.status === 'resuelto' && t.requester_id === req.user.id;
@@ -459,7 +461,7 @@ app.patch('/api/tickets/:id', auth, staff, wrap((req, res) => {
   if (status !== t.status)
     mailer.notify(updated.requester_email, `Estado: ${status.replace('_', ' ')}`, updated,
       `El estado de tu ticket cambió de "${t.status.replace('_', ' ')}" a "${status.replace('_', ' ')}".` +
-      (done(status) && resolution ? `\n\nSolución:\n${resolution}` : ''));
+      (done(status) && resolution ? `\n\nSolución:\n${resolution}\n\n¿Cómo fue la atención? Abre el ticket y califícala de 1 a 5 estrellas; si algo sigue fallando, puedes reabrirlo.` : ''));
   if (assignee && assignee !== t.assignee_id && assignee !== req.user.id)
     mailer.notify(getUser(assignee).email, 'Se te asignó un ticket', updated,
       `${req.user.name} te asignó este ticket (prioridad ${priority}).`);
@@ -501,6 +503,94 @@ app.post('/api/tickets/:id/comments', auth, notManager, limits.middleware('comme
   if (internal && !isStaff(req.user)) return res.status(403).json({ error: 'Solo TI puede dejar notas internas' });
   addComment({ ticket: t, user: req.user, body, internal });
   res.status(201).json({ ok: true });
+}));
+
+// ---------- Encuesta de satisfacción ----------
+app.post('/api/tickets/:id/rating', auth, wrap((req, res) => {
+  const t = db.prepare('SELECT * FROM tickets WHERE id = ?').get(Number(req.params.id));
+  if (!t || t.requester_id !== req.user.id) return res.status(404).json({ error: 'Ticket no encontrado' });
+  if (!['resuelto', 'cerrado'].includes(t.status)) return res.status(400).json({ error: 'Solo puedes calificar un ticket resuelto' });
+  const rating = Number(req.body.rating);
+  if (!Number.isInteger(rating) || rating < 1 || rating > 5) return res.status(400).json({ error: 'La calificación va de 1 a 5 estrellas' });
+  const comment = str(req.body.comment, 1000) || null;
+  db.prepare(`INSERT INTO ticket_ratings (ticket_id, rating, comment, user_id) VALUES (?,?,?,?)
+    ON CONFLICT(ticket_id) DO UPDATE SET rating = excluded.rating, comment = excluded.comment, updated_at = datetime('now')`).run(t.id, rating, comment, req.user.id);
+  if (rating <= 2) { // calificación baja: se avisa al encargado para que lo atienda
+    const full = withSla(db.prepare(`${TICKET_SELECT} WHERE t.id = ?`).get(t.id));
+    const to = automation.escalationRecipients(t);
+    if (to.length) mailer.notify(to, 'Calificación baja', full, `${req.user.name} calificó con ${rating} de 5 la atención de este ticket.${comment ? `\n\nComentario:\n${comment}` : ''}`);
+  }
+  res.json({ rating, comment });
+}));
+
+// ---------- Base de conocimiento ----------
+const kbManager = (req, res, next) => (isStaff(req.user) ? next() : res.status(403).json({ error: 'Solo el equipo de TI puede editar la base de conocimiento' }));
+const KB_LIST = `SELECT a.id, a.title, a.category, a.published, a.views, a.updated_at, substr(a.body, 1, 200) AS snippet,
+  (SELECT COUNT(*) FROM kb_votes v WHERE v.article_id = a.id AND v.helpful = 1) AS helpful,
+  (SELECT COUNT(*) FROM kb_votes v WHERE v.article_id = a.id AND v.helpful = 0) AS not_helpful FROM kb_articles a`;
+const likeEsc = (w) => '%' + w.replace(/[\\%_]/g, (c) => '\\' + c) + '%';
+
+app.get('/api/kb', auth, wrap((req, res) => {
+  const where = []; const args = [];
+  if (!isStaff(req.user)) where.push('a.published = 1');
+  const cat = str(req.query.category, 60);
+  if (cat) { where.push('a.category = ?'); args.push(cat); }
+  const words = String(req.query.q || '').toLowerCase().split(/\s+/).filter((w) => w.length >= 3).slice(0, 6);
+  for (const w of words) { where.push("(lower(a.title) LIKE ? ESCAPE '\\' OR lower(a.body) LIKE ? ESCAPE '\\' OR lower(a.category) LIKE ? ESCAPE '\\')"); args.push(likeEsc(w), likeEsc(w), likeEsc(w)); }
+  const titleHits = words.length ? words.map(() => "(lower(a.title) LIKE ? ESCAPE '\\')").join(' + ') : '(0+0)';
+  const order = `${titleHits} DESC, helpful DESC, a.views DESC, a.updated_at DESC`;
+  const rows = db.prepare(`${KB_LIST} ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY ${order} LIMIT ?`)
+    .all(...args, ...words.map(likeEsc), Math.min(Number(req.query.limit) || 100, 100));
+  res.json({ articles: rows, categories: db.prepare(`SELECT category, COUNT(*) AS n FROM kb_articles ${isStaff(req.user) ? '' : 'WHERE published = 1'} GROUP BY category ORDER BY category`).all() });
+}));
+
+app.get('/api/kb/:id', auth, wrap((req, res) => {
+  const a = db.prepare(`${KB_LIST.replace('substr(a.body, 1, 200) AS snippet', 'a.body, a.created_by, a.updated_by')} WHERE a.id = ?`).get(Number(req.params.id));
+  if (!a || (!a.published && !isStaff(req.user))) return res.status(404).json({ error: 'Artículo no encontrado' });
+  db.prepare('UPDATE kb_articles SET views = views + 1 WHERE id = ?').run(a.id);
+  a.views += 1;
+  a.my_vote = db.prepare('SELECT helpful FROM kb_votes WHERE article_id = ? AND user_id = ?').get(a.id, req.user.id)?.helpful ?? null;
+  res.json(a);
+}));
+
+const kbFields = (b, cur = {}) => {
+  const title = str(b.title ?? cur.title, 150), body = typeof (b.body ?? cur.body) === 'string' ? String(b.body ?? cur.body).replace(/\u0000/g, '').trim().slice(0, 20000) : '';
+  const category = str(b.category ?? cur.category ?? 'General', 60) || 'General';
+  const published = b.published === undefined ? (cur.published ?? 1) : b.published === true || b.published === 'true' || b.published === 1 ? 1 : 0;
+  if (title.length < 3) return { error: 'El título debe tener al menos 3 caracteres' };
+  if (body.length < 10) return { error: 'Escribe el contenido del artículo (mínimo 10 caracteres)' };
+  return { title, body, category, published };
+};
+app.post('/api/kb', auth, kbManager, wrap((req, res) => {
+  const f = kbFields(req.body);
+  if (f.error) return res.status(400).json({ error: f.error });
+  const id = db.prepare('INSERT INTO kb_articles (title, body, category, published, created_by, updated_by) VALUES (?,?,?,?,?,?)').run(f.title, f.body, f.category, f.published, req.user.id, req.user.id).lastInsertRowid;
+  audit.log(req, 'kb.create', f.title);
+  res.status(201).json({ id });
+}));
+app.patch('/api/kb/:id', auth, kbManager, wrap((req, res) => {
+  const cur = db.prepare('SELECT * FROM kb_articles WHERE id = ?').get(Number(req.params.id));
+  if (!cur) return res.status(404).json({ error: 'Artículo no encontrado' });
+  const f = kbFields(req.body, cur);
+  if (f.error) return res.status(400).json({ error: f.error });
+  db.prepare("UPDATE kb_articles SET title=?, body=?, category=?, published=?, updated_at=datetime('now'), updated_by=? WHERE id=?").run(f.title, f.body, f.category, f.published, req.user.id, cur.id);
+  audit.log(req, 'kb.update', f.title);
+  res.json({ id: cur.id });
+}));
+app.delete('/api/kb/:id', auth, wrap((req, res) => {
+  if (!['admin', 'coordinator'].includes(req.user.role)) return res.status(403).json({ error: 'Solo el administrador o el encargado pueden eliminar artículos' });
+  const cur = db.prepare('SELECT title FROM kb_articles WHERE id = ?').get(Number(req.params.id));
+  if (!cur) return res.status(404).json({ error: 'Artículo no encontrado' });
+  db.prepare('DELETE FROM kb_articles WHERE id = ?').run(Number(req.params.id));
+  audit.log(req, 'kb.delete', cur.title);
+  res.json({ ok: true });
+}));
+app.post('/api/kb/:id/vote', auth, wrap((req, res) => {
+  const a = db.prepare('SELECT id, published FROM kb_articles WHERE id = ?').get(Number(req.params.id));
+  if (!a || (!a.published && !isStaff(req.user))) return res.status(404).json({ error: 'Artículo no encontrado' });
+  const helpful = req.body.helpful === true || req.body.helpful === 'true' ? 1 : 0;
+  db.prepare('INSERT INTO kb_votes (article_id, user_id, helpful) VALUES (?,?,?) ON CONFLICT(article_id, user_id) DO UPDATE SET helpful = excluded.helpful').run(a.id, req.user.id, helpful);
+  res.json({ ok: true });
 }));
 
 // ---------- Adjuntos ----------
@@ -595,6 +685,8 @@ function summarize(name, list) {
     avg_resolve_h: round1(avg(resolved.map((t) => t.resolve_hours))),
     response_sla_pct: pct(list.filter((t) => !t.sla_response_breached).length, list.length),
     resolve_sla_pct: pct(list.filter((t) => !t.sla_resolve_breached).length, list.length),
+    avg_rating: round1(avg(list.filter((t) => t.rating != null).map((t) => t.rating))),
+    rating_count: list.filter((t) => t.rating != null).length,
   };
 }
 
@@ -622,10 +714,10 @@ app.get('/api/reports/export.csv', auth, reportsViewer, wrap((req, res) => {
   const r = rangeOf(req.query);
   const rows = db.prepare(`${TICKET_SELECT} ${r.sql} ORDER BY t.id`).all(...r.args).map((t) => withSla(t));
   const head = ['id', 'titulo', 'categoria', 'prioridad', 'estado', 'solicitante', 'departamento', 'asignado', 'creado_utc',
-    'primera_respuesta_utc', 'resuelto_utc', 'horas_habiles_hasta_respuesta', 'horas_habiles_hasta_resolucion', 'sla_respuesta_vencido', 'sla_resolucion_vencido', 'solucion', 'origen'];
+    'primera_respuesta_utc', 'resuelto_utc', 'horas_habiles_hasta_respuesta', 'horas_habiles_hasta_resolucion', 'sla_respuesta_vencido', 'sla_resolucion_vencido', 'solucion', 'origen', 'calificacion'];
   const lines = [head.join(',')].concat(rows.map((t) => [t.id, t.title, t.category, t.priority, t.status, t.requester_name,
     t.department, t.assignee_name, t.created_at, t.first_response_at, t.resolved_at, round1(t.response_hours),
-    round1(t.resolve_hours), t.sla_response_breached ? 'si' : 'no', t.sla_resolve_breached ? 'si' : 'no', t.resolution, t.source].map(csvCell).join(',')));
+    round1(t.resolve_hours), t.sla_response_breached ? 'si' : 'no', t.sla_resolve_breached ? 'si' : 'no', t.resolution, t.source, t.rating].map(csvCell).join(',')));
   res.set('Content-Type', 'text/csv; charset=utf-8');
   res.set('Content-Disposition', 'attachment; filename="tickets.csv"');
   res.send('﻿' + lines.join('\r\n'));

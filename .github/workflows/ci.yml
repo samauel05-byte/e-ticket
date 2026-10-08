@@ -149,7 +149,7 @@ jobs:
           if [ "$ok" != 1 ]; then cat server.log; exit 1; fi
       - name: Entrar a la interfaz y crear un usuario por registro local
         run: |
-          curl -fsS -H 'Content-Type: application/json' -d '{"email":"ana@empresa.com","name":"Ana","password":"password123","department_id":3}' http://localhost:3000/api/register
+          curl -fsS -H 'Content-Type: application/json' -d '{"email":"ana@empresa.com","name":"Ana","password":"Segura-2026-ok","department_id":3}' http://localhost:3000/api/register
       - name: Respaldo
         run: |
           node scripts/backup.js --dest backups

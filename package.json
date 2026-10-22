@@ -33,7 +33,7 @@
     "imapflow": "^2.2.5",
     "mailparser": "^3.9.36",
     "multer": "^2.4.0",
-    "nodemailer": "^10.0.15"
+    "nodemailer": "^10.1.7"
   },
   "engines": {
     "node": ">=22"
